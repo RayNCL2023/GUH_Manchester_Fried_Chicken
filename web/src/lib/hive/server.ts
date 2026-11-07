@@ -125,3 +125,39 @@ export class ViewerSocket {
         this.ws?.close();
     }
 }
+
+const isLocal = (host: string) => /^(localhost|127\.|\[::1\]|::1$)/.test(host);
+
+/**
+ * Join link for the QR code. Phones can't reach "localhost", so when the big screen or the
+ * server is on localhost, swap in the laptop's LAN address (asked from the server's /lan).
+ */
+export async function phoneJoinUrl(): Promise<{ url: string; lan: boolean }> {
+    const page = window.location;
+    const ws = serverUrl();
+    let pageHost = page.host;
+    let srvHost = ws ? new URL(httpBase(ws)).host : null;
+    const srvLocal = ws ? isLocal(new URL(httpBase(ws)).hostname) : false;
+    let lan = false;
+    if (ws && (isLocal(page.hostname) || srvLocal)) {
+        try {
+            const r = await fetch(`${httpBase(ws)}/lan`);
+            const { best } = (await r.json()) as { best: string | null };
+            if (best) {
+                if (isLocal(page.hostname)) {
+                    pageHost = `${best}${page.port ? `:${page.port}` : ""}`;
+                    lan = true;
+                }
+                if (srvLocal && srvHost) {
+                    const port = new URL(httpBase(ws)).port;
+                    srvHost = `${best}${port ? `:${port}` : ""}`;
+                    lan = true;
+                }
+            }
+        } catch {
+            // server unreachable: fall back to the page's own origin
+        }
+    }
+    const q = srvHost ? `?server=${encodeURIComponent(srvHost)}` : "";
+    return { url: `${page.protocol}//${pageHost}/join${q}`, lan };
+}
