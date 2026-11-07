@@ -8,7 +8,7 @@ export const GRID = { w: 144, h: 90 };
 export type Area = { id: string; name: string; lat: number; lon: number; mPerCell: number };
 export type OsmElement = { type: string; tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] };
 export type OsmData = { elements: OsmElement[] };
-export type LoadedArea = Area & { terrain: Uint8Array; width: number; height: number; counts: Record<string, number> };
+export type LoadedArea = Area & { terrain: Uint8Array; width: number; height: number; counts: Record<string, number>; osm: OsmData };
 
 export const PRESETS: Area[] = [
 	{ id: "diggle", name: "Diggle, Saddleworth", lat: 53.5655, lon: -1.9925, mPerCell: 20 / 3 },
@@ -34,7 +34,8 @@ export const FUEL: Record<number, number> = {
 
 const OVERPASS = "https://overpass-api.de/api/interpreter";
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
-const KEEP_TAGS = ["building", "highway", "natural", "landuse", "leisure", "waterway", "water", "amenity"];
+// oneway/junction drive the 3D traffic; height/levels extrude 3D buildings.
+const KEEP_TAGS = ["building", "highway", "natural", "landuse", "leisure", "waterway", "water", "amenity", "oneway", "junction", "height", "building:levels"];
 
 export function bbox(a: Area) {
 	const halfW = (GRID.w * a.mPerCell) / 2;
@@ -119,7 +120,7 @@ export async function loadArea(a: Area): Promise<LoadedArea> {
 		}
 	}
 
-	return { ...a, ...rasterize(data, a), width: GRID.w, height: GRID.h };
+	return { ...a, ...rasterize(data, a), width: GRID.w, height: GRID.h, osm: data };
 }
 
 // ---------- rasteriser ----------

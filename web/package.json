@@ -15,6 +15,7 @@
         "dev:bun": "bun --bun x vinext dev"
     },
     "dependencies": {
+        "3d-tiles-renderer": "^0.5.4",
         "@cloudflare/vite-plugin": "^1.54.8",
         "@mfc/ai": "workspace:*",
         "@mfc/engine": "workspace:*",
@@ -40,12 +41,15 @@
         "react-qr-code": "^2.2.0",
         "sass": "latest",
         "tailwind-merge": "latest",
+        "three": "^0.187.0",
+        "three-mesh-bvh": "^0.9.18",
         "wrangler": "^4.131.1"
     },
     "devDependencies": {
         "@types/node": "latest",
         "@types/react": "latest",
         "@types/react-dom": "latest",
+        "@types/three": "^0.187.0",
         "@vinext/cloudflare": "^1.0.0-beta.7",
         "@vitejs/plugin-react": "^6.1.1",
         "@vitejs/plugin-rsc": "^0.5.34",

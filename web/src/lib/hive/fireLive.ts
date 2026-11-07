@@ -8,7 +8,7 @@ import { bearing } from "./pixel";
 import type { Chatter, Live, StatItem } from "./types";
 
 const RANGE = 12;
-const SENSOR = 7;
+export const SENSOR = 7;
 const AGENTS = 12;
 const LOOP_TICKS = 6000;
 const WIND: Vec = { x: 0.8, y: -0.5 };

@@ -1,20 +1,22 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import FireLive from "@/lib/hive/fireLive";
 import ServerFireLive from "@/lib/hive/serverFireLive";
 import { httpBase, serverUrl } from "@/lib/hive/server";
 import type { WorldView } from "../../../../shared/types";
 import VoiceBar from "./VoiceBar";
 import useLive from "@/lib/hive/useLive";
-import { PRESETS, geocode, loadArea, type Area, type LoadedArea } from "@/lib/hive/osm";
+import type { LoadedArea } from "@/lib/hive/osm";
+import useArea from "@/lib/hive/useArea";
+import { SEGMENT, SEGMENT_ITEM } from "@/lib/hive/ui";
 import { C, MODE_COLOR, agentState } from "@/lib/hive/pixel";
 import { LEGEND_COLORS } from "@/lib/hive/mapStyle";
 import ButtonBase from "@/components/(buttons)/ButtonBase";
 import AreaBar from "./AreaBar";
 import DemoLayout from "./DemoLayout";
 import FireMap, { MAP_CELL, type Tool } from "./FireMap";
-import { SAT_ATTRIBUTION, loadSatellite } from "@/lib/hive/satellite";
+import { SAT_ATTRIBUTION } from "@/lib/hive/satellite";
 
 const LEGEND = {
 	pixel: [
@@ -41,8 +43,6 @@ const MAP_VIEWS: { id: MapView; label: string }[] = [
 	{ id: "pixel", label: "Pixel map" },
 ];
 
-const SEGMENT = "flex flex-row gap-[.25rem] p-[.25rem] rounded-full border border-line bg-ink";
-const SEGMENT_ITEM = "min-h-[2.25rem] px-[1rem] rounded-full text-[.875rem] bg-transparent text-mute";
 
 function FireScene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasElement | null }) {
 	const { snap, act } = useLive(() => {
@@ -201,53 +201,12 @@ function FireScene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanva
 }
 
 export default function () {
-	const [area, setArea] = useState<LoadedArea | null>(null);
-	const [satellite, setSatellite] = useState<{ id: string; canvas: HTMLCanvasElement } | null>(null);
-	const [status, setStatus] = useState("Loading map");
-
-	const pick = useCallback(async (a: Area) => {
-		setStatus(`Loading ${a.name} from OpenStreetMap`);
-		try {
-			const loaded = await loadArea(a);
-			setArea(loaded);
-			loadSatellite(loaded, MAP_CELL).then((canvas) => setSatellite({ id: loaded.id, canvas }));
-			setStatus(`${loaded.counts.buildings.toLocaleString("en-GB")} buildings · ${loaded.counts.roads.toLocaleString("en-GB")} roads`);
-		} catch {
-			setStatus(`Couldn't load ${a.name}. Overpass may be busy, try a preset.`);
-		}
-	}, []);
-
-	const search = useCallback(
-		async (q: string) => {
-			setStatus(`Searching for "${q}"`);
-			try {
-				const hit = await geocode(q);
-				if (!hit) {
-					setStatus(`No place called "${q}"`);
-					return;
-				}
-				await pick(hit);
-			} catch {
-				setStatus("Search failed. Check the connection, or pick a preset.");
-			}
-		},
-		[pick],
-	);
-
-	useEffect(() => {
-		pick(PRESETS[0]);
-	}, [pick]);
+	const { area, satellite, status, pick, search } = useArea(MAP_CELL);
 
 	return (
 		<>
 			<AreaBar current={area?.id} status={status} onPreset={pick} onSearch={search} />
-			{area && (
-				<FireScene
-					key={`${area.id}:${area.mPerCell}`}
-					area={area}
-					satellite={satellite?.id === area.id ? satellite.canvas : null}
-				/>
-			)}
+			{area && <FireScene key={`${area.id}:${area.mPerCell}`} area={area} satellite={satellite} />}
 		</>
 	);
 }

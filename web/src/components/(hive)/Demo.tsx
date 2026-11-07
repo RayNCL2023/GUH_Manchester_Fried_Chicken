@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { serverUrl } from "@/lib/hive/server";
 import FireDemo from "./FireDemo";
 import PhonesDemo from "./PhonesDemo";
@@ -8,12 +8,16 @@ import ResultsPanel from "./ResultsPanel";
 import SkyDemo from "./SkyDemo";
 import TopBar from "./TopBar";
 
+// three.js + Google tiles only load when the 3D tab opens.
+const World3D = lazy(() => import("./World3D"));
+
 const BASE_TABS = [
 	{ id: "fire", label: "Firebreak", Scene: FireDemo },
+	{ id: "3d", label: "3D world", Scene: World3D },
 	{ id: "sky", label: "Flock show", Scene: SkyDemo },
 ];
 // With a live server, the real phone light show joins the tabs.
-const LIVE_TABS = [BASE_TABS[0], { id: "phones", label: "Phone light show", Scene: PhonesDemo }, BASE_TABS[1]];
+const LIVE_TABS = [BASE_TABS[0], BASE_TABS[1], { id: "phones", label: "Phone light show", Scene: PhonesDemo }, BASE_TABS[2]];
 
 export default function () {
 	const [TABS, setTabs] = useState(BASE_TABS);
@@ -49,7 +53,9 @@ export default function () {
 					</div>
 				}
 			/>
-			<Scene key={tab} />
+			<Suspense fallback={<p className="p-[2rem] text-mute">Loading 3D world…</p>}>
+				<Scene key={tab} />
+			</Suspense>
 			<ResultsPanel />
 		</div>
 	);
