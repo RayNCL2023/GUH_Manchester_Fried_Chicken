@@ -32,6 +32,43 @@ export function createFireScenario(params: FireParams): Scenario {
         },
         step(world: World) {
             grid = stepFire(grid, burnAge, params, world.wind, world.rng);
+            if (world.tick % 20 !== 0) {
+                return;
+            }
+            // Keep the demo alive forever: relight when the fire dies, regrow when the map is spent.
+            let burning = 0;
+            let clear = 0;
+            for (const c of grid) {
+                if (c === "fire") {
+                    burning++;
+                } else if (c === "clear") {
+                    clear++;
+                }
+            }
+            // Map mostly spent and the fire nearly out: start a fresh scenario (new moor, new ignition).
+            if (clear < grid.length * 0.35 && burning < 30) {
+                grid = initFireMap(width, height);
+                burnAge = new Int32Array(width * height);
+                return;
+            }
+            if (burning >= 6) {
+                return;
+            }
+            // New ignition ("lightning strike") on clear ground, away from the village.
+            for (let tries = 0; tries < 50; tries++) {
+                const x = 4 + Math.floor(world.rng() * (width - 8));
+                const y = 3 + Math.floor(world.rng() * (height - 6));
+                if (grid[y * width + x] !== "clear" || village.some((v) => dist(v, { x, y }) < 12)) {
+                    continue;
+                }
+                for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+                    if (grid[(y + dy) * width + x + dx] === "clear") {
+                        grid[(y + dy) * width + x + dx] = "fire";
+                        burnAge[(y + dy) * width + x + dx] = 0;
+                    }
+                }
+                break;
+            }
         },
         cell,
         cells: () => grid,

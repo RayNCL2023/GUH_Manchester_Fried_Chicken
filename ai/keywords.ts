@@ -9,6 +9,10 @@ export interface WorldBrief {
     fireCentre: Vec | null;
     /** Plain-text summary (grid conventions, counts, wind, agents). */
     text: string;
+    burning?: number;
+    alive?: number;
+    isolated?: number;
+    wind?: Vec;
 }
 
 export interface ParsedGoal extends GoalBody {

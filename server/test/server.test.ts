@@ -210,3 +210,24 @@ describe("radio queue (player comfort rules)", () => {
         expect(q.length).toBe(1);
     });
 });
+
+describe("demo longevity", () => {
+    test("fire never stays out for long over 6 minutes", () => {
+        const w = new World();
+        withBots(w, 4);
+        let outFor = 0;
+        let maxOut = 0;
+        let maxBurning = 0;
+        for (let t = 0; t < 3600; t++) {
+            w.step();
+            const burning = w.scenario.cells().filter((c) => c === "fire").length;
+            outFor = burning === 0 ? outFor + 1 : 0;
+            maxOut = Math.max(maxOut, outFor);
+            maxBurning = Math.max(maxBurning, burning);
+        }
+        console.log(`over 6 min: longest stretch with no fire ${maxOut} ticks, peak burning ${maxBurning} / 2400 cells`);
+        expect(maxOut).toBeLessThan(40);
+        // Never a runaway map-wide blaze (that was a real bug: regrowth reset burn timers).
+        expect(maxBurning).toBeLessThan(2400 * 0.3);
+    });
+});

@@ -505,6 +505,6 @@ export class World {
             `Wind vector: (${this.wind.x.toFixed(1)},${this.wind.y.toFixed(1)}) (fire spreads toward it). Edge mapped: ${this.scenario.metrics(this).edgeMappedPct.toFixed(0)}%.`,
             `Drones alive: ${live.length}, isolated: ${isolated}, jam zones: ${this.jamZones.length}, packet loss: ${this.lossPct}%.`,
         ].join(" ");
-        return { width, height, village, fireCentre, text };
+        return { width, height, village, fireCentre, text, burning: fire, alive: live.length, isolated, wind: this.wind };
     }
 }

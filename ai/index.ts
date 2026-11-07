@@ -104,13 +104,24 @@ export async function sitrep(world: WorldBrief): Promise<{ text: string; source:
 }
 
 export function templateSitrep(world: WorldBrief): string {
+    const drones = world.alive !== undefined ? `${world.alive} drones up${world.isolated ? `, ${world.isolated} working alone` : ""}.` : "";
     if (!world.fireCentre) {
-        return "No active fire on the map. All units holding pattern.";
+        return `${drones} No active fire. All units on patrol.`.trim();
     }
+    const dir = world.wind ? compass(world.wind) : null;
     const v = world.village;
-    const d = v ? Math.round(Math.hypot(v.x - world.fireCentre.x, v.y - world.fireCentre.y)) : null;
-    const risk = d === null ? "The village is gone." : d < 10 ? "The village is under direct threat." : "The village is not yet threatened.";
-    return `Fire is active near column ${Math.round(world.fireCentre.x)}, row ${Math.round(world.fireCentre.y)}. ${risk}`;
+    const d = v ? Math.hypot(v.x - world.fireCentre.x, v.y - world.fireCentre.y) : null;
+    const risk = d === null ? "The village is lost." : d < 10 ? "The village is under direct threat." : d < 18 ? "The fire is closing on the village." : "The village is clear for now.";
+    const share = world.burning !== undefined ? world.burning / (world.width * world.height) : 0.05;
+    const size = share < 0.03 ? "A small fire" : share < 0.15 ? "A large fire" : "A major fire";
+    const fire = `${size} is burning${dir ? `, spreading ${dir}` : ""}.`;
+    return `${drones} ${fire} ${risk}`.trim();
+}
+
+function compass(w: Vec): string {
+    const names = ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"];
+    const a = Math.atan2(w.y, w.x); // y grows south
+    return names[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8]!;
 }
 
 function clamp(n: number, lo: number, hi: number): number {

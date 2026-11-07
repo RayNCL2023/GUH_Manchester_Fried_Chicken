@@ -36,6 +36,8 @@ export class RadioPlayer {
     private buffers = new Map<string, Promise<AudioBuffer | null>>();
     private noise: AudioBuffer | null = null;
     private playing = false;
+    /** Live replies / sitreps waiting for the channel: chatter yields to them. */
+    private exclusiveWaiting = 0;
     private muted = false;
     private volume = 0.8;
     private wasJammed = new Map<string, boolean>();
@@ -148,7 +150,7 @@ export class RadioPlayer {
     }
 
     private async pump(): Promise<void> {
-        if (this.playing || !this.ctx) {
+        if (this.playing || !this.ctx || this.exclusiveWaiting > 0) {
             return;
         }
         const line = this.queue.next(performance.now());
@@ -199,7 +201,34 @@ export class RadioPlayer {
         void ctx;
     }
 
-    /** Plays any decoded buffer through the radio chain (also used by PTT replies and sitreps). */
+    /**
+     * Half-duplex entry point for anything outside the chatter queue (live PTT replies, sitreps):
+     * waits for the current line to finish, then plays next, ahead of queued chatter.
+     */
+    async playExclusive(buf: AudioBuffer, o: { pan?: number; jammed?: boolean; radio?: boolean; speaker?: string } = {}): Promise<void> {
+        // No deadline here: every playback is guaranteed to finish (see playBuffer), so the lock frees itself.
+        const deadline = performance.now() + 30000;
+        this.exclusiveWaiting++;
+        try {
+            while (this.playing && performance.now() < deadline) {
+                await sleep(40);
+            }
+        } finally {
+            this.exclusiveWaiting--;
+        }
+        this.playing = true;
+        this.opts.onSpeaking?.(o.speaker ?? null);
+        try {
+            await this.playBuffer(buf, o);
+        } finally {
+            this.opts.onSpeaking?.(null);
+            await sleep(GAP_MS);
+            this.playing = false;
+            void this.pump();
+        }
+    }
+
+    /** Plays any decoded buffer through the radio chain (low level: no half-duplex lock). */
     async playBuffer(buf: AudioBuffer, o: { pan?: number; jammed?: boolean; radio?: boolean } = {}): Promise<void> {
         const ctx = this.ctx;
         if (!ctx) {
@@ -236,6 +265,8 @@ export class RadioPlayer {
         src.start(t0 + 0.06);
         await new Promise<void>((resolve) => {
             src.onended = () => resolve();
+            // Safety: never hold the radio longer than the clip itself (+1 s), even if onended is lost.
+            setTimeout(resolve, (buf.duration + 1.1) * 1000);
         });
         stopStatic?.();
     }
@@ -361,7 +392,7 @@ export class RadioPlayer {
         const voice = this.voices[voiceIndexFor(agentId, this.voices.length)];
         const buf = await this.load(`${this.audioBase}/${voice}/${key}_${variant}.mp3`);
         if (buf) {
-            await this.playBuffer(buf);
+            await this.playExclusive(buf, { speaker: agentId });
         }
     }
 

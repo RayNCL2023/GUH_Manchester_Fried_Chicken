@@ -111,7 +111,7 @@ export class PushToTalk {
             });
             const buf = res.ok ? await radio.decode(await res.arrayBuffer()) : null;
             if (buf) {
-                await radio.playBuffer(buf);
+                await radio.playExclusive(buf, { speaker: agentId });
                 return;
             }
         } catch {
@@ -125,7 +125,7 @@ export class PushToTalk {
         const radio = this.opts.radio;
         await radio.unlock();
         const { text } = (await (await fetch(`${this.base}/ai/sitrep`)).json()) as { text: string };
-        radio.duck("sitrep");
+        // Half-duplex lock (playExclusive) keeps chatter from talking over it; no ducking needed.
         try {
             const res = await fetch(`${this.base}/tts`, {
                 method: "POST",
@@ -134,12 +134,12 @@ export class PushToTalk {
             });
             const buf = res.ok ? await radio.decode(await res.arrayBuffer()) : null;
             if (buf) {
-                await radio.playBuffer(buf, { radio: false });
+                await radio.playExclusive(buf, { radio: false });
             } else if (typeof speechSynthesis !== "undefined") {
                 speechSynthesis.speak(new SpeechSynthesisUtterance(text));
             }
-        } finally {
-            radio.duck(null);
+        } catch {
+            // TTS failed: the text is still shown on screen
         }
         return text;
     }
