@@ -1,5 +1,7 @@
 # 3D model shortlist (Sketchfab)
 
+> **In use now:** CC0 Kenney Car Kit vehicles and a Poly Pizza quadcopter, listed in `web/public/models/CREDITS.md`. The Sketchfab picks below are for later: Sketchfab has a daily download limit.
+
 These were found by scout agents using the public Sketchfab API. Nothing has been downloaded yet.
 The numbers come from the API, and **the models haven't been checked visually**.
 

@@ -30,17 +30,29 @@ Mesh.prototype.raycast = acceleratedRaycast;
 export interface Ground {
 	readonly object: Object3D;
 	update(cameras: Camera[], renderer: WebGLRenderer): void;
+	// 0..1 while the first view is still streaming in; ready once it has settled.
+	readonly progress: number;
+	readonly ready: boolean;
 	credits(): string;
 	dispose(): void;
 }
 
 const GOOGLE_ROOT = "https://tile.googleapis.com/v1/3dtiles/root.json";
 const DRACO = "https://www.gstatic.com/draco/versioned/decoders/1.5.7/";
+// Tiles load coarse-to-fine: each finished level queues the next, so "idle once" is not "loaded".
+// Ready = nothing in flight for this long, or the cap runs out.
+const SETTLE_MS = 600;
+const READY_CAP_MS = 15000;
 
 export class GoogleGround implements Ground {
 	readonly object: Object3D;
 	private tiles: TilesRenderer;
 	private draco = new DRACOLoader().setDecoderPath(DRACO);
+	private models = 0;
+	private born = performance.now();
+	private quietSince = 0;
+	ready = false;
+	progress = 0;
 
 	constructor(
 		frame: Frame,
@@ -61,6 +73,7 @@ export class GoogleGround implements Ground {
 					o.geometry.computeBoundsTree();
 				}
 			});
+			this.models++;
 			on.change();
 		});
 		tiles.addEventListener("dispose-model", ({ scene }) => {
@@ -86,6 +99,25 @@ export class GoogleGround implements Ground {
 			this.tiles.setResolutionFromRenderer(cam, renderer);
 		}
 		this.tiles.update();
+		this.settle();
+	}
+
+	private settle() {
+		if (this.ready) {
+			return;
+		}
+		const now = performance.now();
+		// `stats` exists at runtime but is missing from the typings.
+		const { queued, downloading, parsing } = (this.tiles as unknown as { stats: Record<string, number> }).stats;
+		const busy = queued + downloading + parsing > 0 || this.models === 0;
+		this.progress = Math.max(this.progress, Math.min(0.99, this.tiles.loadProgress));
+		if (busy) {
+			this.quietSince = now;
+		}
+		if ((!busy && now - this.quietSince > SETTLE_MS) || now - this.born > READY_CAP_MS) {
+			this.ready = true;
+			this.progress = 1;
+		}
 	}
 
 	credits() {
@@ -122,6 +154,8 @@ function buildingHeight(tags: Record<string, string>, seed: number) {
 
 export class BlocksGround implements Ground {
 	readonly object = new Group();
+	readonly ready = true;
+	readonly progress = 1;
 	private disposables: { dispose(): void }[] = [];
 
 	constructor(frame: Frame, satellite: HTMLCanvasElement | null) {

@@ -51,6 +51,8 @@ export class Heightmap {
 	base = 0;
 	// True once a full pass has found ground somewhere.
 	ready = false;
+	// Completed full passes; lets callers wait for a pass over freshly loaded ground.
+	passes = 0;
 	private order: number[];
 	private cursor = 0;
 	private dirty = false;
@@ -120,6 +122,7 @@ export class Heightmap {
 		}
 		if (this.cursor === this.order.length) {
 			this.base = median(this.heights);
+			this.passes++;
 			this.ready ||= this.heights.some((v) => !Number.isNaN(v));
 		}
 	}

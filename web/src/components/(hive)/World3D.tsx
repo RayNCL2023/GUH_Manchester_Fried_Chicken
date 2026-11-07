@@ -38,13 +38,14 @@ const LEGEND = [
 function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasElement | null }) {
 	const { snap, act } = useLive(() => new FireLive(area));
 	const host = useRef<HTMLDivElement>(null);
+	const frame = useRef<HTMLDivElement>(null);
 	const engine = useRef<Engine | null>(null);
 	const [tool, setTool] = useState<Tool>("ignite");
 	const [cam, setCam] = useState<CamMode>("orbit");
 	const [ground, setGround] = useState<GroundMode>(GOOGLE_KEY ? "photoreal" : "blocks");
 	const [selected, setSelected] = useState<string | null>(null);
 	const [traffic, setTraffic] = useState(true);
-	const [status, setStatus] = useState({ credits: "", groundError: "", heightsReady: false, cars: 0 });
+	const [status, setStatus] = useState({ credits: "", groundError: "", heightsReady: false, loading: 0, cars: 0 });
 
 	// The engine's click handlers outlive renders; read the latest tool through a ref.
 	const toolRef = useRef(tool);
@@ -86,6 +87,18 @@ function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasEle
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [area]);
 
+	// The whole map frame (canvas, overlays, loading cover) swallows the wheel so the page never scrolls.
+	// Native listener: React's onWheel is passive and can't preventDefault.
+	useEffect(() => {
+		const el = frame.current;
+		if (!el) {
+			return;
+		}
+		const block = (e: WheelEvent) => e.preventDefault();
+		el.addEventListener("wheel", block, { passive: false });
+		return () => el.removeEventListener("wheel", block);
+	}, []);
+
 	useEffect(() => {
 		if (snap) {
 			engine.current?.setView(snap.view);
@@ -115,8 +128,18 @@ function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasEle
 
 	return (
 		<div className="flex flex-col gap-[.75rem] p-[.75rem]">
-			<div className="relative w-full h-[calc(100vh-15rem)] min-h-[28rem] rounded-[1.25rem] overflow-hidden border border-line bg-panel">
+			<div ref={frame} className="relative w-full h-[calc(100vh-15rem)] min-h-[28rem] rounded-[1.25rem] overflow-hidden overscroll-contain border border-line bg-panel">
 				<div ref={host} className="absolute inset-0" />
+				{!status.heightsReady && (
+					<div className="absolute inset-0 flex flex-col items-center justify-center gap-[.5rem] bg-panel text-mute">
+						<p className="text-white">Loading 3D world…</p>
+						<p className="text-[.875rem]">
+							{ground === "photoreal"
+								? `Streaming Google 3D tiles · ${Math.round(status.loading * 100)}%`
+								: "Building OSM blocks"}
+						</p>
+					</div>
+				)}
 				<div className="absolute top-[1rem] left-[1rem] flex flex-row flex-wrap items-center gap-[1rem] px-[1rem] py-[.5rem] rounded-full bg-ink/80 text-[.875rem] pointer-events-none">
 					<span>{area.name}</span>
 					{LEGEND.map((l) => (
@@ -125,7 +148,6 @@ function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasEle
 							{l.label}
 						</span>
 					))}
-					{!status.heightsReady && <span className="text-amber">Mapping terrain…</span>}
 				</div>
 				{sel && cam !== "drone" && (
 					<p className="absolute top-[1rem] right-[1rem] px-[.75rem] py-[.25rem] rounded-full bg-ink/80 text-[.875rem] pointer-events-none">
@@ -133,7 +155,7 @@ function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasEle
 					</p>
 				)}
 				<p className="absolute left-[1rem] bottom-[.75rem] max-w-[60%] text-[.875rem] text-white/80 [text-shadow:0_0_.4rem_#000] pointer-events-none">
-					{status.credits}
+					{status.credits} · Vehicles: Kenney (CC0) · Drone: NateGazzard (CC-BY)
 					{status.groundError && ` · Photoreal unavailable: ${status.groundError}`}
 				</p>
 			</div>
@@ -157,7 +179,7 @@ function Scene({ area, satellite }: { area: LoadedArea; satellite: HTMLCanvasEle
 					Reset
 				</ButtonBase>
 				<p className="text-[.875rem] text-mute xl:ml-auto">
-					Click a drone to ride along · shift-click to kill · drag to orbit · {view?.metrics.aliveAgents ?? 0} drones up
+					Click a drone to ride along · shift-click to kill · drag to pan · right-drag to tilt and turn · scroll to zoom · {view?.metrics.aliveAgents ?? 0} drones up
 				</p>
 			</div>
 		</div>

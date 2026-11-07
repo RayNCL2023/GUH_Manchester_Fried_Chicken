@@ -22,27 +22,49 @@ import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 
 export type Kind = "car" | "fireEngine" | "drone";
 
-// Fill these as models get downloaded, e.g. car: [{ url: "/models/cars/fiesta.glb", length: 4.1 }].
-// rotateY corrects models that don't face +Z.
-type ModelFile = { url: string; length: number; rotateY?: number };
+// GLBs in /public/models (credits in /public/models/CREDITS.md). length = real-world metres;
+// weight = how often it turns up in traffic. All of these face +Z already.
+type ModelFile = { url: string; length: number; weight?: number; rotateY?: number };
 export const MODEL_FILES: Record<Kind, ModelFile[]> = {
-	car: [],
-	fireEngine: [],
-	drone: [],
+	car: [
+		{ url: "/models/cars/sedan.glb", length: 4.6, weight: 4 },
+		{ url: "/models/cars/hatchback-sports.glb", length: 4.2, weight: 3 },
+		{ url: "/models/cars/sedan-sports.glb", length: 4.6, weight: 2 },
+		{ url: "/models/cars/suv.glb", length: 4.7, weight: 3 },
+		{ url: "/models/cars/suv-luxury.glb", length: 4.9, weight: 2 },
+		{ url: "/models/cars/taxi.glb", length: 4.6, weight: 2 },
+		{ url: "/models/cars/van.glb", length: 5.3, weight: 2 },
+		{ url: "/models/cars/delivery.glb", length: 6.5, weight: 1 },
+		{ url: "/models/cars/truck.glb", length: 6.2, weight: 1 },
+		{ url: "/models/cars/garbage-truck.glb", length: 8.5, weight: 0.5 },
+		{ url: "/models/emergency/police.glb", length: 4.8, weight: 0.6 },
+		{ url: "/models/emergency/ambulance.glb", length: 6.2, weight: 0.4 },
+	],
+	fireEngine: [{ url: "/models/emergency/firetruck.glb", length: 8 }],
+	drone: [{ url: "/models/drones/quadcopter.glb", length: 0.6 }],
 };
 
-const templates: Partial<Record<Kind, Object3D[]>> = {};
+const ROTOR = /prop|rotor|blade/i;
+
+const templates: Partial<Record<Kind, { object: Object3D; weight: number }[]>> = {};
 const loader = new GLTFLoader();
 
-// Loads whatever GLBs are listed; missing files just leave the procedural fallback in place.
-export async function loadModels() {
+let loading: Promise<void> | null = null;
+
+// Loads whatever GLBs are listed (once per page); missing files just leave the procedural fallback in place.
+export function loadModels() {
+	loading ??= loadAll();
+	return loading;
+}
+
+async function loadAll() {
 	await Promise.all(
 		(Object.keys(MODEL_FILES) as Kind[]).map(async (kind) => {
 			const loaded = await Promise.all(
 				MODEL_FILES[kind].map((f) =>
 					loader
 						.loadAsync(f.url)
-						.then((g) => normalise(g.scene, f))
+						.then((g) => ({ object: normalise(g.scene, f), weight: f.weight ?? 1 }))
 						.catch(() => null),
 				),
 			);
@@ -55,6 +77,16 @@ export async function loadModels() {
 }
 
 function normalise(scene: Object3D, f: ModelFile) {
+	// Some exports bake rotor vertices off-centre; move each rotor's pivot to its own centre so it spins in place.
+	scene.traverse((o) => {
+		if (!(o instanceof Mesh) || !ROTOR.test(o.name)) {
+			return;
+		}
+		o.geometry.computeBoundingBox();
+		const c = o.geometry.boundingBox!.getCenter(new Vector3());
+		o.geometry = o.geometry.clone().translate(-c.x, -c.y, -c.z);
+		o.position.add(c);
+	});
 	const box = new Box3().setFromObject(scene);
 	const size = box.getSize(new Vector3());
 	const scale = f.length / Math.max(size.x, size.z);
@@ -74,7 +106,9 @@ function fromTemplate(kind: Kind): Object3D | null {
 	if (!list?.length) {
 		return null;
 	}
-	return cloneSkinned(list[Math.floor(Math.random() * list.length)]);
+	let r = Math.random() * list.reduce((sum, t) => sum + t.weight, 0);
+	const pick = list.find((t) => (r -= t.weight) <= 0) ?? list[0];
+	return cloneSkinned(pick.object);
 }
 
 // ---------- shared geometry ----------
@@ -144,6 +178,8 @@ export function makeFireEngine(): FireEngine {
 	}
 	if (fromFile) {
 		g.add(fromFile);
+		const top = new Box3().setFromObject(fromFile);
+		beacons.forEach((b) => b.position.set(b.position.x, top.max.y + 0.1, top.max.z * 0.55));
 		return { object: g, beacons };
 	}
 	const red = paint(0xc8161d);
@@ -175,6 +211,12 @@ export function makeDrone(colour: string): Drone {
 
 	if (fromFile) {
 		g.add(fromFile);
+		// Spin whatever the model calls its propellers.
+		fromFile.traverse((o) => {
+			if (ROTOR.test(o.name) && !rotors.some((r) => o.parent === r)) {
+				rotors.push(o);
+			}
+		});
 	} else {
 		g.add(part(droneBody, 0.22, 0.09, 0.32, 0, 0, 0));
 		for (const a of [Math.PI / 4, -Math.PI / 4]) {
