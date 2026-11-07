@@ -185,6 +185,8 @@ export class DroneFX {
 	private water: WaterFX;
 	private radio = new RadioFX();
 	selected: string | null = null;
+	// Non-drone radio endpoints (the ground station's antenna).
+	fixed: ((id: string) => Vector3 | null) | null = null;
 
 	constructor(
 		private frame: Frame,
@@ -400,7 +402,7 @@ export class DroneFX {
 		this.water.update(dt, this.sprays());
 		this.radio.update(dt, (id) => {
 			const u = this.units.get(id);
-			return u?.alive ? u.pos : null;
+			return u ? (u.alive ? u.pos : null) : (this.fixed?.(id) ?? null);
 		});
 	}
 

@@ -1,50 +1,53 @@
 // Benchmark: Hive vs a (generous) centralised controller as comms degrade. Data from
 // engine/sim/benchmark.ts -> engine/sim/results.json (regenerate, rebuild, it updates here).
 import results from "@mfc/engine/results";
+import { twMerge } from "tailwind-merge";
 import PanelBase from "./PanelBase";
 
 type Row = { scenario: string; results: { hive: number; central: number } };
 
-export default function () {
-    const rows = (results as { rows: Row[] }).rows;
-    return (
-        <PanelBase
-            index="05"
-            title="When the link fails · % of fire edge mapped (8 drones, 3 seeds)"
-            aside={
-                <span className="flex flex-row gap-[1rem] text-[.875rem] text-mute">
-                    <span className="flex flex-row items-center gap-[.4rem]">
-                        <span className="size-[.6rem] bg-flock" />
-                        Hive (leaderless)
-                    </span>
-                    <span className="flex flex-row items-center gap-[.4rem]">
-                        <span className="size-[.6rem] bg-mute" />
-                        Central controller with perfect info
-                    </span>
-                </span>
-            }
-            className="border-b"
-        >
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-[1.25rem]">
-                {rows.map((r) => (
-                    <div key={r.scenario} className="flex flex-col gap-[.4rem]">
-                        <p className="text-[.875rem] text-white">{r.scenario}</p>
-                        <Bar value={r.results.hive} className="bg-flock" />
-                        <Bar value={r.results.central} className="bg-mute" />
-                    </div>
-                ))}
-            </div>
-        </PanelBase>
-    );
-}
+const round = (v: number) => Math.round(Math.max(0, Math.min(100, v)));
 
-function Bar({ value, className }: { value: number; className: string }) {
-    return (
-        <div className="flex flex-row items-center gap-[.5rem]">
-            <div className="flex-1 h-[.5rem] bg-panel">
-                <div className={`h-full ${className}`} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-            </div>
-            <span className="w-[3rem] text-right text-[.875rem] tabular-nums text-white">{Math.round(value)}%</span>
-        </div>
-    );
+export default function () {
+	const rows = (results as { rows: Row[] }).rows;
+	// The headline: the harshest comms where the central controller still had a link to lose.
+	const worst = rows.reduce((b, r) => (r.results.hive - r.results.central > b.results.hive - b.results.central ? r : b));
+
+	return (
+		<PanelBase index="05" title="Benchmark · % of the fire edge mapped (8 drones, 3 seeds, 60 s)" className="mx-[.75rem] mb-[.75rem]">
+			<div className="flex flex-col lg:flex-row lg:items-end gap-[1.5rem] pb-[1.25rem] border-b border-line">
+				<p className="font-display text-[4.5rem] leading-none tracking-[-0.04em] tabular-nums text-flock">
+					{round(worst.results.hive)}
+					<span className="text-[2rem] opacity-70">%</span>
+				</p>
+				<p className="font-display text-[2.5rem] leading-none tracking-[-0.03em] tabular-nums text-mute">
+					vs {round(worst.results.central)}%
+				</p>
+				<p className="text-[1rem] text-white leading-relaxed text-pretty lg:max-w-[28rem]">
+					With <span className="text-ember">{worst.scenario.toLowerCase()}</span>, the leaderless flock still maps{" "}
+					{round(worst.results.hive)}% of the fire edge. A central controller with perfect information manages{" "}
+					{round(worst.results.central)}%.
+				</p>
+			</div>
+			<div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-[.75rem]">
+				{rows.map((r) => {
+					const delta = round(r.results.hive) - round(r.results.central);
+					return (
+						<div key={r.scenario} className="flex flex-col gap-[.5rem] p-[1rem] rounded-[1rem] bg-ink border border-line">
+							<p className="text-[.875rem] text-mute leading-snug min-h-[2.5rem]">{r.scenario}</p>
+							<p className="font-display text-[2.25rem] leading-none tracking-[-0.03em] tabular-nums text-flock">
+								{round(r.results.hive)}
+								<span className="text-[1rem] opacity-70">%</span>
+							</p>
+							<p className="text-[.875rem] text-mute tabular-nums">central {round(r.results.central)}%</p>
+							<p className={twMerge("self-start px-[.6rem] py-[.1rem] rounded-full text-[.875rem] tabular-nums", delta > 0 ? "bg-flock text-ink" : "bg-line text-mute")}>
+								{delta > 0 ? `+${delta}` : delta} pts
+							</p>
+						</div>
+					);
+				})}
+			</div>
+			<p className="text-[.875rem] text-mute">Hive is leaderless: no drone and no ground station is in charge. The central controller sees everything but loses its drones when the link drops.</p>
+		</PanelBase>
+	);
 }

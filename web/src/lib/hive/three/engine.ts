@@ -19,6 +19,8 @@ import type { WorldView } from "../../../../../shared/types";
 import type { LoadedArea } from "../osm";
 import type { UnitInfo } from "../roles";
 import type { RadioBeam } from "../fireLive";
+import { ANTENNA_ID, latLonToCell } from "../antenna";
+import { AntennaFX } from "./antenna";
 import { DroneFX, OVERVIEW_LAYER } from "./drones";
 import { FireFX } from "./fire";
 import { Scorch } from "./scorch";
@@ -61,6 +63,7 @@ export default class Engine {
 	private scorch: Scorch;
 	private drones: DroneFX | null = null;
 	private traffic: Traffic | null = null;
+	private antenna: AntennaFX | null = null;
 	private lastView: { view: WorldView; units: Record<string, UnitInfo>; radio: RadioBeam[] } | null = null;
 	private trafficOn = true;
 	private disposed = false;
@@ -145,12 +148,17 @@ export default class Engine {
 
 		this.fire = new FireFX(this.frame, this.heights, this.scorch);
 		this.fire.addTo(this.scene);
+		if (area.antenna) {
+			this.antenna = new AntennaFX(this.frame, this.heights, latLonToCell(area, area.antenna.lat, area.antenna.lon));
+			this.antenna.addTo(this.scene);
+		}
 		// Vehicles and drones wait for the GLBs so they're built from the real models.
 		loadModels().then(() => {
 			if (this.disposed) {
 				return;
 			}
 			this.drones = new DroneFX(this.frame, this.heights);
+			this.drones.fixed = (id) => (id === ANTENNA_ID ? (this.antenna?.position() ?? null) : null);
 			this.drones.addTo(this.scene);
 			this.traffic = new Traffic(this.frame, this.heights, this.fire);
 			this.traffic.addTo(this.scene);
@@ -260,6 +268,12 @@ export default class Engine {
 
 	reset() {
 		this.fire.reset();
+	}
+
+	setAntennaJammed(jammed: boolean) {
+		if (this.antenna) {
+			this.antenna.jammed = jammed;
+		}
 	}
 
 	setCamera(mode: CamMode) {
@@ -390,6 +404,7 @@ export default class Engine {
 		this.fire.update(dt);
 		this.drones?.update(dt, now);
 		this.traffic?.update(dt);
+		this.antenna?.update(dt);
 
 		if (this.cam === "follow") {
 			this.chase(dt);
@@ -460,6 +475,7 @@ export default class Engine {
 		this.scorch.dispose();
 		this.drones?.dispose();
 		this.traffic?.dispose();
+		this.antenna?.dispose();
 		this.renderer.dispose();
 		el.remove();
 	}

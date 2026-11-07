@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { PICTURES } from "../pixel";
-import { BLOCK, blockCount, decodeMission, encodeFrame, encodeMission, nextSlot, parseFrame, payloadLength } from "./packet";
+import { PICTURES, UPLINK_PICTURES } from "../pixel";
+import { BLOCK, PICTURE_SHOW, blockCount, decodeMission, encodeFrame, encodeMission, nextSlot, parseFrame, payloadLength } from "./packet";
 import { LtDecoder, encodeSymbol, splitBlocks } from "./fountain";
 
 describe("mission packet", () => {
@@ -10,6 +10,22 @@ describe("mission packet", () => {
 			const bytes = encodeMission(m);
 			expect(bytes.length).toBe(payloadLength(p.art[0].length, p.art.length));
 			expect(decodeMission(bytes, p.art[0].length, p.art.length)).toEqual(m);
+		}
+	});
+
+	test("16×16 uplink pictures fit in 5 blocks and round trip", () => {
+		for (const p of UPLINK_PICTURES) {
+			const m = { showId: PICTURE_SHOW, protocol: 2, relay: true, slotMs: 4800, startAt: 1_794_000_000, art: p.art };
+			expect(blockCount(16, 16)).toBe(5);
+			const blocks = splitBlocks(encodeMission(m), BLOCK);
+			const dec = new LtDecoder(blocks.length, BLOCK);
+			for (let seed = 0; !dec.done && seed < 200; seed++) {
+				if (seed % 3 === 1) {
+					continue; // a third of the chunks lost
+				}
+				dec.add(seed, encodeSymbol(blocks, seed));
+			}
+			expect(decodeMission(dec.bytes(payloadLength(16, 16)), 16, 16)).toEqual(m);
 		}
 	});
 

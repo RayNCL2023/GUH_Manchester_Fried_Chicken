@@ -5,15 +5,17 @@ import type { Vec } from "../../../../shared/types";
 // Same ground area as the first 96×60 version, at 1.5× the resolution.
 export const GRID = { w: 144, h: 90 };
 
-export type Area = { id: string; name: string; lat: number; lon: number; mPerCell: number };
+// Presets carry a ground-station antenna on a landmark roof; searched places have none.
+export type Antenna = { name: string; lat: number; lon: number };
+export type Area = { id: string; name: string; lat: number; lon: number; mPerCell: number; antenna?: Antenna };
 export type OsmElement = { type: string; tags?: Record<string, string>; geometry?: { lat: number; lon: number }[] };
 export type OsmData = { elements: OsmElement[] };
 export type LoadedArea = Area & { terrain: Uint8Array; width: number; height: number; counts: Record<string, number>; osm: OsmData };
 
 export const PRESETS: Area[] = [
-	{ id: "campus", name: "University of Manchester", lat: 53.4668, lon: -2.2325, mPerCell: 16 / 3 },
-	{ id: "buckingham", name: "Buckingham Palace", lat: 51.5014, lon: -0.1419, mPerCell: 16 / 3 },
-	{ id: "nyc", name: "New York City", lat: 40.758, lon: -73.9855, mPerCell: 16 / 3 },
+	{ id: "campus", name: "University of Manchester", lat: 53.4668, lon: -2.2325, mPerCell: 16 / 3, antenna: { name: "Kilburn Building", lat: 53.467525, lon: -2.234003 } },
+	{ id: "buckingham", name: "Buckingham Palace", lat: 51.5014, lon: -0.1419, mPerCell: 16 / 3, antenna: { name: "Buckingham Palace", lat: 51.50134, lon: -0.14189 } },
+	{ id: "nyc", name: "New York City", lat: 40.758, lon: -73.9855, mPerCell: 16 / 3, antenna: { name: "One Times Square", lat: 40.75641, lon: -73.98649 } },
 ];
 
 // Terrain codes, painted in this order (later wins).

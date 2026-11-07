@@ -2,10 +2,11 @@
 // on terrain rasterised from OpenStreetMap. Roads and water act as firebreaks.
 import { HiveBrain } from "@mfc/engine";
 import { SimWorld, type SimMetrics } from "@mfc/engine/sim";
-import type { CellState, ChatterBody, Control, MsgKind, Vec, WorldView } from "../../../../shared/types";
+import type { CellState, ChatterBody, Control, GoalBody, MsgKind, Vec, WorldView } from "../../../../shared/types";
+import { ANTENNA_ID, ANTENNA_M, GroundStation, latLonToCell, type FireCluster, type LinkState, type StationEvent } from "./antenna";
 import { FUEL, T, type LoadedArea } from "./osm";
 import { bearing } from "./pixel";
-import { ALTITUDE_M, SkyBrain, WaterBrain, type UnitInfo } from "./roles";
+import { ALTITUDE_M, SkyBrain, WaterBrain, type Role, type UnitInfo } from "./roles";
 import type { Chatter, Live, StatItem } from "./types";
 
 // Real mesh radios (900 MHz / 2.4 GHz with clear line of sight between drones) carry well over a km.
@@ -28,6 +29,31 @@ const WET_TICKS = 400;
 // One beam per drone pair per tick: the most important thing that went over it.
 export type RadioBeam = { from: string; to: string; kind: MsgKind; ok: boolean };
 const KIND_RANK: Record<MsgKind, number> = { goal: 5, claim: 4, release: 3, map: 2, chatter: 1, heartbeat: 0 };
+// Rolling window for the live packet-loss figure (ticks).
+const LOSS_WINDOW = 50;
+// Routine traffic to the antenna is drawn at most this often per drone, so the beams stay readable.
+const ANTENNA_BEAM_TICKS = 6;
+
+export type Mission = { id: string; text: string; target: Vec; crew: string[]; tick: number; onScene: number };
+
+export type StationSnap = {
+	name: string;
+	pos: Vec;
+	jammed: boolean;
+	links: Record<string, LinkState>;
+	direct: number;
+	relay: number;
+	dark: number;
+	fireCells: number;
+	clusters: FireCluster[];
+	events: StationEvent[];
+	missions: Mission[];
+	lastHeard: Record<string, number>;
+};
+
+export type UplinkResult =
+	| { ok: true; via: string; crew: string[]; goalId: string }
+	| { ok: false; reason: string };
 
 export type FireSnap = {
 	view: WorldView;
@@ -38,6 +64,8 @@ export type FireSnap = {
 	history: number[];
 	stats: StatItem[];
 	chatter: Chatter[];
+	station: StationSnap | null;
+	lossPct: number;
 };
 
 export default class FireLive implements Live<FireSnap> {
@@ -50,6 +78,12 @@ export default class FireLive implements Live<FireSnap> {
 	private wet!: Int32Array;
 	private knockedDown = 0;
 	private beams = new Map<string, RadioBeam>();
+	private everBurned = 0;
+	private window: { ok: number; jam: number }[] = [];
+	private tickLinks = { ok: 0, jam: 0 };
+	private antennaBeamAt = new Map<string, number>();
+	private missions: Omit<Mission, "onScene">[] = [];
+	readonly station: GroundStation | null;
 	readonly radioCells: number;
 	readonly skySensor: number;
 
@@ -60,6 +94,8 @@ export default class FireLive implements Live<FireSnap> {
 		this.buildingCells = area.terrain.reduce((n, t) => n + (t === T.building ? 1 : 0), 0);
 		this.radioCells = Math.round(RADIO_M / area.mPerCell);
 		this.skySensor = Math.round((ALTITUDE_M.sky * Math.tan(SKY_HALF_FOV)) / area.mPerCell);
+		const a = area.antenna;
+		this.station = a ? new GroundStation(area, a.name, latLonToCell(area, a.lat, a.lon), Math.round(ANTENNA_M / area.mPerCell)) : null;
 		this.reset();
 	}
 
@@ -100,6 +136,11 @@ export default class FireLive implements Live<FireSnap> {
 		});
 		this.wet = new Int32Array(width * height);
 		this.knockedDown = 0;
+		this.everBurned = 0;
+		this.window = [];
+		this.missions = [];
+		this.antennaBeamAt.clear();
+		this.station?.reset();
 
 		// Replace the default map with real terrain: buildings are what the flock protects.
 		this.sim.cells = Array.from(terrain, (t): CellState => (t === T.building ? "village" : "clear"));
@@ -110,17 +151,21 @@ export default class FireLive implements Live<FireSnap> {
 		});
 
 		this.sim.onLink = (from, to, kind, ok) => {
-			const key = `${from}>${to}`;
-			const prev = this.beams.get(key);
-			if (!prev || KIND_RANK[kind] > KIND_RANK[prev.kind] || (ok && !prev.ok)) {
-				this.beams.set(key, { from, to, kind, ok });
+			this.beam(from, to, kind, ok);
+			if (ok) {
+				this.tickLinks.ok++;
+			} else {
+				this.tickLinks.jam++;
 			}
 		};
 		this.sim.onSend = (from, m) => {
+			this.toAntenna(from, m.kind);
 			if (m.kind !== "chatter") {
 				return;
 			}
-			this.chatter.push({ from, line: (m.body as ChatterBody).line, tick: this.sim.tick });
+			const line = (m.body as ChatterBody).line;
+			this.station?.hearChatter(this.sim.tick, from, line);
+			this.chatter.push({ from, line, tick: this.sim.tick });
 			if (this.chatter.length > 30) {
 				this.chatter.shift();
 			}
@@ -129,6 +174,55 @@ export default class FireLive implements Live<FireSnap> {
 		this.chatter = [];
 		this.history = [];
 		this.inspectId = null;
+	}
+
+	private beam(from: string, to: string, kind: MsgKind, ok: boolean) {
+		const key = `${from}>${to}`;
+		const prev = this.beams.get(key);
+		if (!prev || KIND_RANK[kind] > KIND_RANK[prev.kind] || (ok && !prev.ok)) {
+			this.beams.set(key, { from, to, kind, ok });
+		}
+	}
+
+	// Every transmission is also heard (or not) by the ground station's antenna.
+	private toAntenna(from: string, kind: MsgKind) {
+		const st = this.station;
+		const a = this.sim.agents.find((x) => x.id === from);
+		if (!st || !a?.alive) {
+			return;
+		}
+		const path = st.pathTo(a.pos, this.sim.cfg.jamZones);
+		if (path === "range") {
+			return;
+		}
+		const ok = path === "ok" && !st.jammed && !this.sim.jammed(a.pos);
+		if (ok && Math.random() * 100 < this.sim.cfg.lossPct) {
+			return; // lost to noise: nobody sees it
+		}
+		st.countPacket(ok);
+		const tick = this.sim.tick;
+		if (KIND_RANK[kind] < KIND_RANK.claim && tick - (this.antennaBeamAt.get(from) ?? -1e9) < ANTENNA_BEAM_TICKS) {
+			return;
+		}
+		this.antennaBeamAt.set(from, tick);
+		this.beam(from, ANTENNA_ID, kind, ok);
+	}
+
+	// Drone-to-drone links that work right now (both ends outside every jammer, in range).
+	private meshLinks(): [string, string][] {
+		const s = this.sim;
+		const free = s.agents.filter((a) => a.alive && !s.jammed(a.pos));
+		const links: [string, string][] = [];
+		for (let i = 0; i < free.length; i++) {
+			for (let k = i + 1; k < free.length; k++) {
+				const a = free[i];
+				const b = free[k];
+				if (Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) <= s.cfg.radioRange) {
+					links.push([a.id, b.id]);
+				}
+			}
+		}
+		return links;
 	}
 
 	// Launch from the open ground nearest the bottom-left corner.
@@ -161,10 +255,25 @@ export default class FireLive implements Live<FireSnap> {
 	step() {
 		const before = this.sim.cells;
 		this.beams.clear();
+		this.tickLinks = { ok: 0, jam: 0 };
 		this.sim.step();
 		this.applyFuel(before);
 		this.spray();
 		this.metrics = this.sim.metrics();
+		this.window.push(this.tickLinks);
+		if (this.window.length > LOSS_WINDOW) {
+			this.window.shift();
+		}
+		const st = this.station;
+		if (st) {
+			st.update(this.sim.tick, this.sim.agents, this.meshLinks(), this.sim.cfg.jamZones);
+			if (this.sim.tick % 5 === 0) {
+				st.updateFire(
+					this.sim.tick,
+					this.sim.agents.map((a) => ({ id: a.id, map: (a.brain as HiveBrain).map })),
+				);
+			}
+		}
 
 		if (this.sim.tick % 5 === 0) {
 			this.history.push(this.metrics.edgeMappedPct);
@@ -183,8 +292,13 @@ export default class FireLive implements Live<FireSnap> {
 		const { terrain } = this.area;
 		const tick = this.sim.tick;
 		for (let i = 0; i < after.length; i++) {
-			if (after[i] === "fire" && before[i] !== "fire" && (Math.random() > FUEL[terrain[i]] || this.wet[i] > tick)) {
+			if (after[i] !== "fire" || before[i] === "fire") {
+				continue;
+			}
+			if (Math.random() > FUEL[terrain[i]] || this.wet[i] > tick) {
 				after[i] = before[i];
+			} else {
+				this.everBurned++;
 			}
 		}
 	}
@@ -231,6 +345,7 @@ export default class FireLive implements Live<FireSnap> {
 				if (this.sim.cells[i] === "clear" || this.sim.cells[i] === "village") {
 					this.sim.cells[i] = "fire";
 					this.sim.burnAge[i] = 0;
+					this.everBurned++;
 				}
 			}
 		}
@@ -266,6 +381,56 @@ export default class FireLive implements Live<FireSnap> {
 		}
 	}
 
+	// Ground control → flock. The order leaves the antenna to one drone it can reach directly, then floods
+	// drone to drone like any other goal. Jam the antenna (or every path out of it) and nothing gets through.
+	uplink(target: Vec, text: string, opts: { crew?: number; role?: Role | "any" } = {}): UplinkResult {
+		const st = this.station;
+		if (!st) {
+			return { ok: false, reason: "This map has no ground station antenna." };
+		}
+		if (st.jammed) {
+			return { ok: false, reason: "The antenna is jammed. Nothing can be transmitted until the jammer is cleared." };
+		}
+		const s = this.sim;
+		const direct = s.agents.filter((a) => a.alive && st.link.get(a.id) === "direct");
+		if (!direct.length) {
+			return { ok: false, reason: "No drone has a clear path to the antenna right now, so the order can't be sent." };
+		}
+		const d = (p: Vec, q: Vec) => Math.hypot(p.x - q.x, p.y - q.y);
+		const via = direct.reduce((b, a) => (d(a.pos, st.pos) < d(b.pos, st.pos) ? a : b));
+		const role = opts.role ?? "echo";
+		const pool = s.agents.filter((a) => {
+			if (!a.alive || st.link.get(a.id) === "dark") {
+				return false;
+			}
+			return role === "any" || a.id.toLowerCase().startsWith(role);
+		});
+		const crew = pool
+			.sort((a, b) => d(a.pos, target) - d(b.pos, target))
+			.slice(0, Math.max(1, Math.min(pool.length, opts.crew ?? 4)))
+			.map((a) => a.id);
+		const body: GoalBody = { id: st.nextGoalId(), text, target: { x: target.x, y: target.y }, radius: 6, priority: 3, assignees: crew };
+		via.inbox.push({ id: `${body.id}~up`, from: ANTENNA_ID, kind: "goal", ttl: 0, ts: s.tick, body });
+		this.beam(ANTENNA_ID, via.id, "goal", true);
+		st.lastUplink = { tick: s.tick, via: via.id, goal: body };
+		st.event(s.tick, `Order uplinked via ${via.id}: ${text} (${crew.join(", ")}) ${st.describe(target.x, target.y)}`);
+		this.missions.push({ id: body.id, text, target: body.target!, crew, tick: s.tick });
+		if (this.missions.length > 6) {
+			this.missions.shift();
+		}
+		return { ok: true, via: via.id, crew, goalId: body.id };
+	}
+
+	private lossNow() {
+		const ok = this.window.reduce((n, w) => n + w.ok, 0);
+		const jam = this.window.reduce((n, w) => n + w.jam, 0);
+		const l = Math.min(0.99, this.sim.cfg.lossPct / 100);
+		// Noise drops happen before the radio hook sees them, so recover them from the configured rate.
+		const clean = ok / (1 - l);
+		const total = clean + jam;
+		return total ? Math.round(((total - ok) / total) * 100) : this.sim.cfg.lossPct;
+	}
+
 	rotateWind() {
 		const w = this.sim.cfg.wind;
 		const a = Math.atan2(w.y, w.x) + Math.PI / 4;
@@ -273,24 +438,111 @@ export default class FireLive implements Live<FireSnap> {
 		this.control({ type: "setWind", wind: { x: Math.cos(a) * m, y: Math.sin(a) * m } });
 	}
 
+	private stationSnap(): StationSnap | null {
+		const st = this.station;
+		if (!st) {
+			return null;
+		}
+		const links = Object.fromEntries(st.link);
+		const count = (k: LinkState) => Object.values(links).filter((v) => v === k).length;
+		const pos = (id: string) => this.sim.agents.find((a) => a.id === id);
+		return {
+			name: st.name,
+			pos: st.pos,
+			jammed: st.jammed,
+			links,
+			direct: count("direct"),
+			relay: count("relay"),
+			// Only drones it once heard and now can't: the station has no idea about the dead ones' fate.
+			dark: this.sim.agents.length - count("direct") - count("relay"),
+			fireCells: st.fireCells,
+			clusters: st.clusters.slice(0, 5),
+			events: st.events.slice(-30),
+			missions: this.missions.map((m) => ({
+				...m,
+				onScene: m.crew.filter((id) => {
+					const a = pos(id);
+					return a?.alive && Math.hypot(a.pos.x - m.target.x, a.pos.y - m.target.y) <= 8;
+				}).length,
+			})),
+			lastHeard: Object.fromEntries(st.lastHeard),
+		};
+	}
+
+	private stats(alive: number, spraying: number, lost: number): StatItem[] {
+		const s = this.sim;
+		const m = this.metrics;
+		const st = this.stationSnap();
+		const burning = s.cells.reduce((n, c) => n + (c === "fire" ? 1 : 0), 0);
+		const loss = this.lossNow();
+		const jammed = s.agents.filter((a) => a.alive && s.jammed(a.pos)).length;
+		const reporting = st ? st.direct + st.relay : 0;
+		const out = this.everBurned ? Math.round(((this.everBurned - burning) / this.everBurned) * 100) : null;
+		return [
+			{
+				label: "Fire edge mapped",
+				value: m.edgeCells ? Math.round(m.edgeMappedPct) : "–",
+				unit: m.edgeCells ? "%" : undefined,
+				tone: "flock",
+				hero: true,
+				hint: m.edgeCells ? `even with ${loss}% of packets lost` : "Start a fire to see the flock map it",
+			},
+			{
+				label: "Packets lost on air",
+				value: loss,
+				unit: "%",
+				tone: "bad",
+				hero: true,
+				hint: `${s.cfg.lossPct}% noise${s.cfg.jamZones.length ? ` + ${s.cfg.jamZones.length} jammer${s.cfg.jamZones.length > 1 ? "s" : ""}` : ""} · ${jammed} drone${jammed === 1 ? "" : "s"} inside one`,
+			},
+			st
+				? {
+						label: "Reporting to ground",
+						value: alive ? Math.round((reporting / alive) * 100) : 0,
+						unit: "%",
+						tone: st.jammed ? "bad" : "good",
+						hero: true,
+						hint: st.jammed ? "Antenna jammed: the flock carries on alone" : `${st.direct} direct · ${st.relay} via mesh relay · ${Math.max(0, alive - reporting)} dark`,
+					}
+				: {
+						label: "Mesh links up",
+						value: this.meshLinks().length,
+						tone: "good",
+						hero: true,
+						hint: "No ground station on searched maps",
+					},
+			{
+				label: "Fire put out",
+				value: out ?? "–",
+				unit: out === null ? undefined : "%",
+				tone: "good",
+				hero: true,
+				hint: out === null ? "Nothing burning yet" : `${burning} cells still burning · ${this.knockedDown} knocked down by water`,
+			},
+			{
+				label: "Buildings saved",
+				value: this.buildingCells ? 100 - Math.round((lost / this.buildingCells) * 100) : 100,
+				unit: "%",
+				tone: "warn",
+				hero: true,
+				hint: `${lost} building cells burnt`,
+			},
+			{ label: "Elapsed", value: Math.floor(s.tick / 10), unit: "s" },
+			{ label: "Drones up", value: alive, unit: `/ ${s.agents.length}` },
+			{ label: "Water drones spraying", value: spraying, unit: `/ ${WATERS}` },
+			{ label: "Messages delivered", value: m.messagesDelivered.toLocaleString("en-GB") },
+			{ label: "Duplicate claims", value: m.duplicateClaims },
+			{ label: "Wind", value: bearing(s.cfg.wind), unit: "°" },
+		];
+	}
+
 	snapshot(): FireSnap {
 		const s = this.sim;
-		const { width, height, radioRange } = s.cfg;
+		const { width, height } = s.cfg;
 		const m = this.metrics;
 		const alive = s.agents.filter((a) => a.alive);
 		const brain = (a: (typeof s.agents)[number]) => a.brain as HiveBrain;
-		const free = alive.filter((a) => !s.jammed(a.pos));
-
-		const links: [string, string][] = [];
-		for (let i = 0; i < free.length; i++) {
-			for (let k = i + 1; k < free.length; k++) {
-				const a = free[i];
-				const b = free[k];
-				if (Math.hypot(a.pos.x - b.pos.x, a.pos.y - b.pos.y) <= radioRange) {
-					links.push([a.id, b.id]);
-				}
-			}
-		}
+		const links = this.meshLinks();
 
 		const insp = alive.find((a) => a.id === this.inspectId);
 		const { terrain } = this.area;
@@ -337,22 +589,9 @@ export default class FireLive implements Live<FireSnap> {
 			headline: m.edgeCells ? Math.round(m.edgeMappedPct) : 0,
 			history: [...this.history],
 			chatter: this.chatter.slice(-8).reverse(),
-			stats: [
-				{ label: "Elapsed", value: Math.floor(s.tick / 10), unit: "s" },
-				{ label: "Flock alive", value: alive.length, unit: `/ ${s.agents.length}` },
-				{ label: "Avg map known", value: Math.round(m.avgKnownPct), unit: "%" },
-				{ label: "Messages sent", value: m.messagesSent.toLocaleString("en-GB") },
-				{ label: "Duplicate claims", value: m.duplicateClaims },
-				{ label: "Message loss", value: s.cfg.lossPct, unit: "%" },
-				{ label: "Water drones spraying", value: spraying, unit: `/ ${WATERS}` },
-				{ label: "Fire knocked down", value: this.knockedDown, unit: "cells" },
-				{ label: "Wind bearing", value: bearing(s.cfg.wind), unit: "°" },
-				{
-					label: "Buildings lost",
-					value: this.buildingCells ? Math.round((lost / this.buildingCells) * 100) : 0,
-					unit: "%",
-				},
-			],
+			stats: this.stats(alive.length, spraying, lost),
+			station: this.stationSnap(),
+			lossPct: s.cfg.lossPct,
 		};
 	}
 }

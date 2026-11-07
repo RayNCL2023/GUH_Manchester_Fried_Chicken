@@ -32,7 +32,7 @@ export default function () {
 					min={0}
 					max={90}
 					step={10}
-					value={snap.stats.find((s) => s.label === "Message loss")?.value ?? 0}
+					value={snap.lossPct}
 					onChange={(e) => act((w) => (w.lossPct = Number(e.target.value)))}
 					className="accent-[#5aa9ff]"
 				/>

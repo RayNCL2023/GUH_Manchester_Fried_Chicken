@@ -17,6 +17,7 @@
     "dependencies": {
         "3d-tiles-renderer": "^0.5.4",
         "@cloudflare/vite-plugin": "^1.54.8",
+        "@elevenlabs/client": "^1.35.0",
         "@mfc/ai": "workspace:*",
         "@mfc/engine": "workspace:*",
         "@mfc/voice": "workspace:*",

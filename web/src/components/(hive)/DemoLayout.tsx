@@ -2,7 +2,7 @@ import type { Chatter, StatItem } from "@/lib/hive/types";
 import JoinPanel from "./JoinPanel";
 import PanelBase from "./PanelBase";
 import Sparkline from "./Sparkline";
-import Stat from "./Stat";
+import StatBoard from "./StatBoard";
 
 // Shared shell for every live scenario: canvas left, numbers right, stat strip below.
 export default function ({
@@ -61,11 +61,7 @@ export default function ({
 				</div>
 			</div>
 
-			<div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-8 gap-[.75rem]">
-				{stats.map((s) => (
-					<Stat key={s.label} {...s} />
-				))}
-			</div>
+			<StatBoard stats={stats} />
 		</div>
 	);
 }

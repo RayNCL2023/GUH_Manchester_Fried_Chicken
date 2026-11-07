@@ -9,7 +9,9 @@ import { C, MODE_COLOR, agentState } from "@/lib/hive/pixel";
 import Engine, { type CamMode } from "@/lib/hive/three/engine";
 import ButtonBase from "@/components/(buttons)/ButtonBase";
 import AreaBar from "./AreaBar";
+import GroundControl from "./GroundControl";
 import Segment from "./Segment";
+import StatBoard from "./StatBoard";
 import { MAP_CELL } from "./FireMap";
 
 const GOOGLE_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY;
@@ -31,9 +33,10 @@ const LEGEND = [
 	{ label: "Jammer", color: C.ember },
 	{ label: "Goal msg", color: C.amber },
 ];
+const ANTENNA_LEGEND = { label: "Antenna", color: C.flock };
 
 function Scene({ area, googleKey }: { area: LoadedArea; googleKey: string }) {
-	const { snap, act } = useLive(() => new FireLive(area));
+	const { snap, act, world } = useLive(() => new FireLive(area));
 	const host = useRef<HTMLDivElement>(null);
 	const frame = useRef<HTMLDivElement>(null);
 	const engine = useRef<Engine | null>(null);
@@ -98,6 +101,7 @@ function Scene({ area, googleKey }: { area: LoadedArea; googleKey: string }) {
 	useEffect(() => {
 		if (snap) {
 			engine.current?.setView(snap.view, snap.units, snap.radio);
+			engine.current?.setAntennaJammed(!!snap.station?.jammed);
 		}
 	}, [snap]);
 
@@ -126,7 +130,7 @@ function Scene({ area, googleKey }: { area: LoadedArea; googleKey: string }) {
 				)}
 				<div className="absolute top-[1rem] left-[1rem] flex flex-row flex-wrap items-center gap-[1rem] px-[1rem] py-[.5rem] rounded-full bg-ink/80 text-[.875rem] pointer-events-none">
 					<span>{area.name}</span>
-					{LEGEND.map((l) => (
+					{(area.antenna ? [...LEGEND, ANTENNA_LEGEND] : LEGEND).map((l) => (
 						<span key={l.label} className="flex flex-row items-center gap-[.4rem] text-mute">
 							<span className="size-[.6rem] rounded-full" style={{ background: l.color }} />
 							{l.label}
@@ -153,6 +157,18 @@ function Scene({ area, googleKey }: { area: LoadedArea; googleKey: string }) {
 				</ButtonBase>
 				<ButtonBase onClick={() => act((w) => w.rotateWind())}>Rotate wind 45°</ButtonBase>
 				<ButtonBase onClick={() => act((w) => w.control({ type: "clearJams" }))}>Clear jams</ButtonBase>
+				<label className="flex flex-row items-center gap-[.75rem] min-h-[2.75rem] px-[1.1rem] rounded-full border border-line text-[.875rem] text-mute">
+					Noise loss {snap?.lossPct ?? 0}%
+					<input
+						type="range"
+						min={0}
+						max={90}
+						step={10}
+						value={snap?.lossPct ?? 0}
+						onChange={(e) => act((w) => w.control({ type: "setLoss", pct: Number(e.target.value) }))}
+						className="accent-[#5aa9ff]"
+					/>
+				</label>
 				<ButtonBase
 					onClick={() => {
 						act((w) => w.control({ type: "reset" }));
@@ -165,6 +181,9 @@ function Scene({ area, googleKey }: { area: LoadedArea; googleKey: string }) {
 					Click a drone to ride along · shift-click to kill · drag to pan · right-drag to tilt and turn · scroll to zoom · {view?.metrics.aliveAgents ?? 0} drones up
 				</p>
 			</div>
+
+			<GroundControl area={area} snap={snap} world={world} act={act} />
+			{snap && <StatBoard stats={snap.stats} />}
 		</div>
 	);
 }

@@ -60,6 +60,7 @@ export type SkySnap = {
 	history: number[];
 	stats: StatItem[];
 	chatter: Chatter[];
+	lossPct: number;
 };
 
 const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -318,6 +319,59 @@ export default class SkyLive implements Live<SkySnap> {
 		this.jams = [];
 	}
 
+	private stats(alive: Drone[], onShow: number, clashes: number): StatItem[] {
+		const jammed = alive.filter((d) => d.jammed);
+		// A jammed drone is "in sync" while it's lit and flying a show off the shared clock.
+		const synced = jammed.filter((d) => d.color !== UNLIT).length;
+		const pct = (n: number, of: number) => (of ? Math.round((n / of) * 100) : 0);
+		return [
+			{
+				label: "Flock alive",
+				value: alive.length,
+				unit: `/ ${DRONES}`,
+				tone: "flock",
+				hero: true,
+				hint: alive.length < DRONES ? `${DRONES - alive.length} down: the rest re-flowed into the picture` : "Click a drone to take it down",
+			},
+			{
+				label: "Got the new show",
+				value: pct(onShow, alive.length),
+				unit: "%",
+				tone: "good",
+				hero: true,
+				hint: `${onShow} of ${alive.length} drones, passed drone to drone. No central link.`,
+			},
+			{
+				label: "Packets lost",
+				value: this.lossPct,
+				unit: "%",
+				tone: "bad",
+				hero: true,
+				hint: jammed.length ? `plus ${jammed.length} drone${jammed.length > 1 ? "s" : ""} inside a jammer` : "drag the loss slider up to stress it",
+			},
+			{
+				label: "Jammed, still dancing",
+				value: jammed.length ? pct(synced, jammed.length) : "–",
+				unit: jammed.length ? "%" : undefined,
+				tone: "warn",
+				hero: true,
+				hint: jammed.length ? `${synced} of ${jammed.length} jammed drones keep the beat on the shared clock` : "Drag on the sky to drop a jammer",
+			},
+			{
+				label: "Mid-air clashes",
+				value: clashes,
+				tone: clashes ? "bad" : "good",
+				hero: true,
+				hint: "two drones claiming the same slot",
+			},
+			{ label: "Lights on", value: alive.filter((d) => d.color !== UNLIT).length },
+			{ label: "Radio links", value: this.links.length },
+			{ label: "Shows sent", value: this.current.seq + 1 },
+			{ label: "Elapsed", value: Math.floor(this.tick / 10), unit: "s" },
+			{ label: "Show", value: SHOWS[this.current.show].name },
+		];
+	}
+
 	snapshot(): SkySnap {
 		const alive = this.drones.filter((d) => d.alive);
 		const claims = new Map<string, number>();
@@ -350,16 +404,8 @@ export default class SkyLive implements Live<SkySnap> {
 			headline: this.formed,
 			history: [...this.history],
 			chatter: this.chatter.slice(-8).reverse(),
-			stats: [
-				{ label: "Show", value: SHOWS[this.current.show].name },
-				{ label: "Flock alive", value: alive.length, unit: `/ ${DRONES}` },
-				{ label: "Got the new show", value: onShow, unit: `/ ${alive.length}` },
-				{ label: "Lights on", value: alive.filter((d) => d.color !== UNLIT).length },
-				{ label: "Radio links", value: this.links.length },
-				{ label: "Jammed", value: alive.filter((d) => d.jammed).length },
-				{ label: "Duplicate claims", value: [...claims.values()].filter((n) => n > 1).length },
-				{ label: "Message loss", value: this.lossPct, unit: "%" },
-			],
+			lossPct: this.lossPct,
+			stats: this.stats(alive, onShow, [...claims.values()].filter((n) => n > 1).length),
 		};
 	}
 }
