@@ -1,8 +1,6 @@
 "use client";
 
-import { Suspense, lazy, useEffect, useState } from "react";
-import { serverUrl } from "@/lib/hive/server";
-import PhonesDemo from "./PhonesDemo";
+import { Suspense, lazy, useState } from "react";
 import ResultsPanel from "./ResultsPanel";
 import SkyDemo from "./SkyDemo";
 import TopBar from "./TopBar";
@@ -11,25 +9,15 @@ import UplinkConsole from "./UplinkConsole";
 // three.js + Google tiles load lazily so the shell paints first.
 const World3D = lazy(() => import("./World3D"));
 
-const BASE_TABS = [
+const TABS = [
 	{ id: "fire", label: "Firebreak", Scene: World3D },
 	{ id: "sky", label: "Flock show", Scene: SkyDemo },
 	// Works with no server at all: the only link is the laptop speaker.
 	{ id: "uplink", label: "Sound uplink", Scene: UplinkConsole },
 ];
-// With a live server, the real phone light show joins the tabs.
-const LIVE_TABS = [BASE_TABS[0], { id: "phones", label: "Phone light show", Scene: PhonesDemo }, BASE_TABS[1], BASE_TABS[2]];
 
 export default function () {
-	const [TABS, setTabs] = useState(BASE_TABS);
-	const [live, setLive] = useState(false);
-	useEffect(() => {
-		if (serverUrl()) {
-			setTabs(LIVE_TABS);
-			setLive(true);
-		}
-	}, []);
-	const [tab, setTab] = useState(BASE_TABS[0].id);
+	const [tab, setTab] = useState(TABS[0].id);
 	const { Scene } = TABS.find((t) => t.id === tab) ?? TABS[0];
 
 	return (
@@ -38,7 +26,7 @@ export default function () {
 				crumbs={["Live demo"]}
 				right={
 					<div className="flex flex-row items-center gap-[1.5rem]">
-						<p className="hidden lg:block text-[.875rem] text-mute">{live ? "Real engine · live server" : "Real engine · simulated world"}</p>
+						<p className="hidden lg:block text-[.875rem] text-mute">Real engine · simulated world</p>
 						<div className="flex flex-row gap-[.25rem] p-[.25rem] rounded-full border border-line bg-ink">
 							{TABS.map((t) => (
 								<button
