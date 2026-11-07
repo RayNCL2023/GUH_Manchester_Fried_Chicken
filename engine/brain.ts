@@ -61,6 +61,8 @@ interface MyClaim {
 interface GoalRec {
     body: GoalBody;
     receivedAt: number;
+    /** We've been there: the goal still boosts nearby tasks but no longer drags us back. */
+    reached: boolean;
 }
 
 // Timings (ticks at 10 Hz)
@@ -78,6 +80,13 @@ const TASK_COOLDOWN = 30;
 const TASK_FORGET = 100;
 const CROWD_RADIUS = 4;
 const RELAY_TTL = 2;
+/** Cut off this long with nothing to do: head back toward where peers were last heard. */
+const REGROUP_AFTER = 40;
+/** After a regroup leg ends without reconnecting, explore for this long before trying again. */
+const REGROUP_BACKOFF = 120;
+/** Ticks we stick with an explore target before re-rolling (re-rolling early makes drones double back). */
+const EXPLORE_COMMIT = 150;
+const GOAL_ARRIVE = 3;
 const GOSSIP_CAP = 200;
 
 export class HiveBrain implements AgentBrain {
@@ -95,6 +104,7 @@ export class HiveBrain implements AgentBrain {
     private outbox: OutMsg[] = [];
 
     private seen = new LruSet(2000);
+    private retiredGoals = new LruSet(500);
     private claims = new Map<string, ClaimRec>();
     private myClaim: MyClaim | null = null;
     private cooldown = new Map<string, number>();
@@ -114,11 +124,16 @@ export class HiveBrain implements AgentBrain {
     private goals = new Map<string, GoalRec>();
     private knownTasks = new Map<string, { task: Task; seen: number }>();
     private exploreTarget: Vec | null = null;
+    private lastLinkedPos: Vec | null = null;
+    private regroup: Vec | null = null;
+    private regroupBackoff = 0;
     private exploreSince = 0;
     private seenFire = false;
     private chatter = new ChatterPlanner();
     readonly wind = new WindModel();
     private centroidCache: { tick: number; c: Vec | null } = { tick: -1, c: null };
+    /** Why we're flying where we are (debug / viewer). */
+    moveReason = "explore";
 
     constructor(opts: HiveOptions = {}) {
         this.map = new LocalMap(opts.width ?? 60, opts.height ?? 40);
@@ -205,6 +220,7 @@ export class HiveBrain implements AgentBrain {
         const now = new Set(sense.neighbours);
         if (now.size > 0) {
             this.lastNeighbourTick = this.tick;
+            this.lastLinkedPos = { ...this.pos };
         }
         for (const n of now) {
             this.lastHeard.set(n, this.tick);
@@ -344,21 +360,42 @@ export class HiveBrain implements AgentBrain {
 
     private onGoal(msg: Msg): void {
         const body = msg.body as GoalBody;
-        if (!body || !body.id || this.goals.has(body.id)) {
+        if (!body || !body.id || this.goals.has(body.id) || this.retiredGoals.has(body.id)) {
             return;
         }
-        this.goals.set(body.id, { body, receivedAt: this.tick });
+        // A newer goal with the same text supersedes the old one (e.g. a scout re-plotting the fire).
+        // Superseded ids are retired for good: otherwise two live goals re-flood each other forever.
+        let prev: GoalRec | null = null;
+        for (const [id, rec] of this.goals) {
+            if (rec.body.text === body.text) {
+                prev = rec;
+                this.goals.delete(id);
+                this.retiredGoals.add(id);
+            }
+        }
+        const mine = this.goalAppliesToMe(body);
+        const wasMine = !!prev && this.goalAppliesToMe(prev.body);
+        // A re-plot that barely moved keeps us where we are: no doubling back to the new centre.
+        const sameSpot = !!prev?.reached && !!prev.body.target && !!body.target && dist(prev.body.target, body.target) < 8;
+        this.goals.set(body.id, { body, receivedAt: this.tick, reached: wasMine && mine && sameSpot });
         // Flood: forward once on first hearing.
         this.emit("goal", body, 0);
         // Self-limiting audible ripple: only "copy" if our neighbourhood is quiet.
         if (this.chatter.quietFor(this.tick, 8)) {
             this.chatter.propose("goal_copy", this.tick);
         }
-        // Re-plan immediately toward the goal.
+        // Re-plan immediately toward a goal that's newly ours; a re-plot of our own goal keeps the current job.
+        if (!mine || wasMine || !body.target) {
+            return;
+        }
         if (this.myClaim) {
             this.releaseClaim(false);
         }
         this.exploreTarget = null;
+    }
+
+    private goalAppliesToMe(body: GoalBody): boolean {
+        return !body.assignees || body.assignees.includes(this.id);
     }
 
     private expireClaims(): void {
@@ -450,15 +487,19 @@ export class HiveBrain implements AgentBrain {
 
     private goalBoost(pos: Vec): number {
         let boost = 1;
+        let elsewhere = false;
         for (const { body } of this.goals.values()) {
-            if (!body.target) {
+            if (!body.target || dist(body.target, pos) > (body.radius ?? 8)) {
                 continue;
             }
-            if (dist(body.target, pos) <= (body.radius ?? 8)) {
+            if (this.goalAppliesToMe(body)) {
                 boost = Math.max(boost, body.priority);
+            } else {
+                elsewhere = true;
             }
         }
-        return boost;
+        // Work on another crew's fire only if there's nothing on ours.
+        return boost > 1 || !elsewhere ? boost : 1 / 3;
     }
 
     private score(task: Task): number {
@@ -703,32 +744,64 @@ export class HiveBrain implements AgentBrain {
 
     private moveTarget(): Vec {
         if (this.myClaim) {
+            this.moveReason = `claim ${this.myClaim.task.id}`;
             return this.myClaim.task.pos;
         }
         const goal = this.activeGoalTarget();
-        if (goal && dist(goal, this.pos) > 3) {
-            return goal;
+        if (goal) {
+            if (dist(goal.body.target!, this.pos) > GOAL_ARRIVE) {
+                this.moveReason = `goal ${goal.body.id}`;
+                return goal.body.target!;
+            }
+            goal.reached = true;
         }
-        const stale = this.tick - this.exploreSince > 60;
+        // Lost the mesh (jammed, or flew out of range): regroup instead of wandering blind.
+        const regroup = this.regroupTarget();
+        if (regroup) {
+            this.moveReason = "regroup";
+            return regroup;
+        }
+        const stale = this.tick - this.exploreSince > EXPLORE_COMMIT;
         const reached = this.exploreTarget && dist(this.exploreTarget, this.pos) < 1.5;
         if (!this.exploreTarget || reached || stale) {
             this.exploreTarget = this.chooseExploreTarget();
             this.exploreSince = this.tick;
         }
+        this.moveReason = "explore";
         return this.exploreTarget;
     }
 
-    private activeGoalTarget(): Vec | null {
+    private activeGoalTarget(): GoalRec | null {
         let best: GoalRec | null = null;
         for (const rec of this.goals.values()) {
-            if (!rec.body.target) {
+            if (!rec.body.target || rec.reached || !this.goalAppliesToMe(rec.body)) {
                 continue;
             }
             if (!best || rec.body.priority > best.body.priority) {
                 best = rec;
             }
         }
-        return best?.body.target ?? null;
+        return best;
+    }
+
+    // Sticky: fly back to the last place we had a link, once per outage, then give up for a while.
+    // (Aiming at stale peer positions dithered forever when those peers were stuck in the same jammer.)
+    private regroupTarget(): Vec | null {
+        if (this.mode !== "isolated") {
+            this.regroup = null;
+            return null;
+        }
+        if (this.tick - this.modeSince < REGROUP_AFTER || this.tick < this.regroupBackoff || !this.lastLinkedPos) {
+            return null;
+        }
+        this.regroup ??= { ...this.lastLinkedPos };
+        if (dist(this.regroup, this.pos) <= 1.5) {
+            this.regroup = null;
+            this.regroupBackoff = this.tick + REGROUP_BACKOFF;
+            this.exploreTarget = null;
+            return null;
+        }
+        return this.regroup;
     }
 
     /** Sample cells; prefer nearby unknown cells away from peers, else the stalest known cell. */

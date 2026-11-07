@@ -26,7 +26,8 @@ export default function ({
 				const known = solved.has(blockOfPixel(i));
 				const ch = PALETTE[pixelAt(payload, i)] ?? ".";
 				const lit = known && ch !== ".";
-				const step = ((PAYLOAD_HEAD * 2 + i) % (BLOCK * 2)) * 45;
+				// Spread each block's reveal over ~1.4 s however big the blocks are.
+				const step = (((PAYLOAD_HEAD * 2 + i) % (BLOCK * 2)) * 1400) / (BLOCK * 2);
 				return (
 					<span
 						key={i}

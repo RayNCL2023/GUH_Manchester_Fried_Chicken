@@ -132,7 +132,7 @@ const isLocal = (host: string) => /^(localhost|127\.|\[::1\]|::1$)/.test(host);
  * Join link for the QR code. Phones can't reach "localhost", so when the big screen or the
  * server is on localhost, swap in the laptop's LAN address (asked from the server's /lan).
  */
-export async function phoneJoinUrl(): Promise<{ url: string; lan: boolean }> {
+export async function phoneJoinUrl(path = "/join"): Promise<{ url: string; lan: boolean }> {
     const page = window.location;
     const ws = serverUrl();
     let pageHost = page.host;
@@ -159,5 +159,5 @@ export async function phoneJoinUrl(): Promise<{ url: string; lan: boolean }> {
         }
     }
     const q = srvHost ? `?server=${encodeURIComponent(srvHost)}` : "";
-    return { url: `${page.protocol}//${pageHost}/join${q}`, lan };
+    return { url: `${page.protocol}//${pageHost}${path}${q}`, lan };
 }

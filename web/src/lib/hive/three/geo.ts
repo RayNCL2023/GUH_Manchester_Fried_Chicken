@@ -90,6 +90,13 @@ export class Heightmap {
 		this.ready = false;
 	}
 
+	// Throw away everything and rescan from scratch (e.g. once the coarse tiles have been replaced).
+	restart() {
+		this.heights.fill(NaN);
+		this.cursor = 0;
+		this.dirty = false;
+	}
+
 	// Call when new ground geometry arrived.
 	invalidate() {
 		this.dirty = true;

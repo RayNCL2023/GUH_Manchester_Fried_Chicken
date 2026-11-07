@@ -24,6 +24,7 @@ import {
 } from "three";
 import type { CellState, Vec } from "../../../../../shared/types";
 import type { Frame, Heightmap } from "./geo";
+import type { Scorch } from "./scorch";
 
 const WIND_MS = 4; // metres per second per unit of sim wind
 
@@ -180,7 +181,6 @@ export class FireFX {
 	private smoke: Particles;
 	private embers: Particles;
 	private glow: InstancedMesh;
-	private char: InstancedMesh;
 	private light = new PointLight(0xff7a2a, 0, 400, 1.2);
 	private burning: number[] = [];
 	private burntAt: Float32Array;
@@ -193,6 +193,7 @@ export class FireFX {
 	constructor(
 		private frame: Frame,
 		private heights: Heightmap,
+		private scorch: Scorch,
 	) {
 		const cells = frame.w * frame.h;
 		this.burntAt = new Float32Array(cells).fill(-1);
@@ -209,26 +210,10 @@ export class FireFX {
 			new MeshBasicMaterial({ map: this.tex, color: 0xff6a1a, transparent: true, opacity: 0.9, blending: AdditiveBlending, depthWrite: false }),
 			cells,
 		);
-		this.char = new InstancedMesh(
-			flat,
-			new MeshBasicMaterial({
-				map: this.tex,
-				color: 0x000000,
-				transparent: true,
-				opacity: 0.75,
-				depthWrite: false,
-				polygonOffset: true,
-				polygonOffsetFactor: -4,
-			}),
-			cells,
-		);
 		this.glow.count = 0;
-		this.char.count = 0;
 		this.glow.frustumCulled = false;
-		this.char.frustumCulled = false;
-		this.char.renderOrder = 1;
 
-		this.group.add(this.char, this.glow, this.smoke.mesh, this.flames.mesh, this.embers.mesh, this.light);
+		this.group.add(this.glow, this.smoke.mesh, this.flames.mesh, this.embers.mesh, this.light);
 	}
 
 	addTo(scene: Scene) {
@@ -275,19 +260,7 @@ export class FireFX {
 		}
 		this.glow.count = g;
 		this.glow.instanceMatrix.needsUpdate = true;
-
-		let c = 0;
-		for (let i = 0; i < this.states.length; i++) {
-			if (this.states[i] !== "burnt") {
-				continue;
-			}
-			const { e, n } = this.frame.cellEN((i % w) + 0.5, Math.floor(i / w) + 0.5);
-			this.frame.world(e, n, this.heights.at(i % w, Math.floor(i / w)) + 0.4, _p);
-			_s.setScalar(m * 1.9);
-			this.char.setMatrixAt(c++, _m.compose(_p, _q, _s));
-		}
-		this.char.count = c;
-		this.char.instanceMatrix.needsUpdate = true;
+		this.scorch.set(this.states);
 	}
 
 	// Heights refine as tiles stream in; re-seat the ground decals now and then.
@@ -326,6 +299,7 @@ export class FireFX {
 
 	update(dt: number) {
 		this.t += dt;
+		this.scorch.update(dt);
 		const { m } = this.frame;
 		const wx = -this.wind.x * WIND_MS; // sim x is east, world +X is west
 		const wz = -this.wind.y * WIND_MS; // sim y is south, world +Z is north
@@ -432,6 +406,7 @@ export class FireFX {
 			p.live = 0;
 		}
 		this.burntAt.fill(-1);
+		this.scorch.clear();
 	}
 
 	dispose() {
@@ -441,6 +416,5 @@ export class FireFX {
 			(p.mesh.material as ShaderMaterial).dispose();
 		}
 		this.glow.dispose();
-		this.char.dispose();
 	}
 }

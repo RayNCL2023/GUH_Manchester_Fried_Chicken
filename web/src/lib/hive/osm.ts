@@ -11,9 +11,9 @@ export type OsmData = { elements: OsmElement[] };
 export type LoadedArea = Area & { terrain: Uint8Array; width: number; height: number; counts: Record<string, number>; osm: OsmData };
 
 export const PRESETS: Area[] = [
-	{ id: "diggle", name: "Diggle, Saddleworth", lat: 53.5655, lon: -1.9925, mPerCell: 20 / 3 },
-	{ id: "dovestone", name: "Dovestone Reservoir", lat: 53.531, lon: -1.973, mPerCell: 32 / 3 },
 	{ id: "campus", name: "University of Manchester", lat: 53.4668, lon: -2.2325, mPerCell: 16 / 3 },
+	{ id: "buckingham", name: "Buckingham Palace", lat: 51.5014, lon: -0.1419, mPerCell: 16 / 3 },
+	{ id: "nyc", name: "New York City", lat: 40.758, lon: -73.9855, mPerCell: 16 / 3 },
 ];
 
 // Terrain codes, painted in this order (later wins).

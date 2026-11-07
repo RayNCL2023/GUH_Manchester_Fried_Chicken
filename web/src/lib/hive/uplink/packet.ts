@@ -15,11 +15,13 @@
 // The countdown makes the sound itself the clock: phones never need their wall clocks to agree.
 import { ART_COLORS } from "../pixel";
 
-export const BLOCK = 8;
+// 32 B blocks: a 16×16 picture is 5 blocks, each frame ~1.9 s on air (Fastest).
+export const BLOCK = 32;
 export const FRAME_HEADER = 7;
 export const FRAME_SIZE = FRAME_HEADER + BLOCK;
 export const PAYLOAD_HEAD = 8;
-export const PALETTE = Object.keys(ART_COLORS);
+export const PALETTE = Object.keys(ART_COLORS); // 16 entries: one nibble per pixel
+export const PICTURE_SHOW = 255; // show id meaning "play the picture itself"
 export const RELAY_SEED = 0x8000; // seeds at or above this were sent by a phone, not the laptop
 export const NO_COUNTDOWN = 0xffff;
 

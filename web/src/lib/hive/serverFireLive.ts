@@ -17,7 +17,6 @@ export default class ServerFireLive implements Live<SourcedSnap> {
     private local: FireLive | null = null;
     private history: number[] = [];
     private lastHistTick = -1;
-    private goalSeq = 0;
     /** Slider shows the setting; the stats strip shows measured loss. */
     private lossSetting = 0;
     private readonly startedAt = performance.now();
@@ -114,18 +113,6 @@ export default class ServerFireLive implements Live<SourcedSnap> {
         }
     }
 
-    protectBuildings() {
-        if (!this.useServer) {
-            this.local?.protectBuildings();
-            return;
-        }
-        const target = this.villageCentre() ?? undefined;
-        this.socket.control({
-            type: "goal",
-            body: { id: `goal-ui-${Date.now()}-${++this.goalSeq}`, text: "Protect the village", target, radius: 8, priority: 3 },
-        });
-    }
-
     get isServer(): boolean {
         return this.useServer && !!this.socket.view;
     }
@@ -156,6 +143,8 @@ export default class ServerFireLive implements Live<SourcedSnap> {
         return {
             source: "server",
             terrain,
+            radio: [],
+            units: Object.fromEntries(v.agents.map((a) => [a.id, { role: "echo" as const, sensor: 5 }])),
             view: {
                 ...v,
                 metrics: { ...v.metrics, msgLossPct: this.lossSetting },

@@ -14,17 +14,20 @@ import {
 	WebGLRenderer,
 } from "three";
 import { MapControls } from "three/addons/controls/MapControls.js";
+import { Sky } from "three/addons/objects/Sky.js";
 import type { WorldView } from "../../../../../shared/types";
 import type { LoadedArea } from "../osm";
-import { DroneFX } from "./drones";
+import type { UnitInfo } from "../roles";
+import type { RadioBeam } from "../fireLive";
+import { DroneFX, OVERVIEW_LAYER } from "./drones";
 import { FireFX } from "./fire";
+import { Scorch } from "./scorch";
 import { Frame, Heightmap } from "./geo";
-import { BlocksGround, GoogleGround, type Ground } from "./ground";
+import { GoogleGround } from "./ground";
 import { loadModels } from "./models";
 import { Traffic } from "./traffic";
 
 export type CamMode = "orbit" | "follow" | "drone";
-export type GroundMode = "photoreal" | "blocks";
 
 export type EngineEvents = {
 	pickDrone: (id: string, shift: boolean) => void;
@@ -32,8 +35,18 @@ export type EngineEvents = {
 	status: (s: { credits: string; groundError?: string; heightsReady: boolean; loading: number; cars: number }) => void;
 };
 
-const SKY = new Color("#a9c1d6");
+const HAZE = new Color("#b7c6d3"); // fog, matched to the sky's horizon
+const SUN = new Vector3(-300, 600, -200).normalize();
+const SKY_EXPOSURE = 0.42;
 const INSET = { w: 0.3, aspect: 4 / 3, pad: 16 };
+// Google's mesh is in ellipsoid heights, so real ground can sit hundreds of metres above y = 0
+// (Diggle is ~300 m). Until the heightmap knows, assume it's this high so we never start underground.
+const UNKNOWN_GROUND = 600;
+const MIN_CLEARANCE = 12;
+// Nowhere on land is the surface this far below the ellipsoid: a reading like this means coarse tiles.
+const MIN_PLAUSIBLE_GROUND = -500;
+const SETTLE_TOLERANCE = 3; // metres two consecutive height scans must agree within
+const MAX_SETTLE_SCANS = 8;
 
 export default class Engine {
 	private renderer: WebGLRenderer;
@@ -42,21 +55,23 @@ export default class Engine {
 	private eye: PerspectiveCamera; // drone's-eye, looking straight down
 	private controls: MapControls;
 	private frame: Frame;
-	private ground!: Ground;
+	private ground: GoogleGround;
 	private heights: Heightmap;
 	private fire: FireFX;
+	private scorch: Scorch;
 	private drones: DroneFX | null = null;
 	private traffic: Traffic | null = null;
-	private lastView: WorldView | null = null;
+	private lastView: { view: WorldView; units: Record<string, UnitInfo>; radio: RadioBeam[] } | null = null;
 	private trafficOn = true;
 	private disposed = false;
 	private clock = new Clock();
 	private raf = 0;
 	private resize: ResizeObserver;
 	private cam: CamMode = "orbit";
-	private groundMode: GroundMode = "blocks";
 	private framed = false;
-	private settledPass = -1; // heightmap pass count when the ground finished loading
+	// Framing waits for the tiles to settle, then for fresh height scans to agree.
+	private settle = { pass: -1, lastBase: NaN, scans: 0 };
+	private sky = new Sky();
 	private statusAt = 0;
 	private down = new Vector2();
 	private ray = new Raycaster();
@@ -64,7 +79,7 @@ export default class Engine {
 	constructor(
 		private host: HTMLElement,
 		area: LoadedArea,
-		private opts: { googleKey?: string; ground: GroundMode; satellite: HTMLCanvasElement | null; sensorCells: number },
+		googleKey: string,
 		private on: EngineEvents,
 	) {
 		this.frame = new Frame(area);
@@ -76,15 +91,34 @@ export default class Engine {
 		this.renderer.domElement.style.display = "block";
 		this.renderer.domElement.style.touchAction = "none";
 
-		this.scene.background = SKY;
-		this.scene.fog = new Fog(SKY, 2500, 9000);
+		this.scene.background = HAZE;
+		this.scene.fog = new Fog(HAZE, 2500, 9000);
+		this.sky.scale.setScalar(20000);
+		const u = this.sky.material.uniforms;
+		u.sunPosition.value.copy(SUN);
+		u.turbidity.value = 3;
+		u.rayleigh.value = 1.2;
+		u.mieCoefficient.value = 0.004;
+		u.mieDirectionalG.value = 0.85;
+		u.cloudCoverage.value = 0.45;
+		u.cloudDensity.value = 0.5;
+		u.cloudElevation.value = 0.6;
+		// The Sky shader is tuned for exposure ~0.5; dim only the sky so the photoreal tiles keep their exposure.
+		this.sky.material.onBeforeCompile = (shader) => {
+			shader.fragmentShader = shader.fragmentShader.replace(
+				"#include <tonemapping_fragment>",
+				`gl_FragColor.rgb *= ${SKY_EXPOSURE.toFixed(2)};\n#include <tonemapping_fragment>`,
+			);
+		};
+		this.scene.add(this.sky);
 		this.scene.add(new HemisphereLight(0xdfe9f5, 0x4a4438, 1.6));
 		const sun = new DirectionalLight(0xfff1dc, 2.2);
-		sun.position.set(-300, 600, -200);
+		sun.position.copy(SUN).multiplyScalar(700);
 		this.scene.add(sun);
 
 		this.camera = new PerspectiveCamera(50, 1, 1, 30000);
 		this.eye = new PerspectiveCamera(70, INSET.aspect, 0.5, 30000);
+		this.camera.layers.enable(OVERVIEW_LAYER);
 		// Google Maps-style: left-drag pans the ground, right/ctrl-drag tilts and turns, wheel zooms to the cursor.
 		const span = Math.max(this.frame.w, this.frame.h) * this.frame.m;
 		this.controls = new MapControls(this.camera, this.renderer.domElement);
@@ -100,23 +134,30 @@ export default class Engine {
 		this.controls.maxDistance = span * 1.1;
 
 		this.heights = new Heightmap(this.frame, this.scene);
-		this.setGround(opts.ground);
+		this.scorch = new Scorch(this.frame);
+		this.ground = new GoogleGround(this.frame, googleKey, {
+			change: () => this.heights.invalidate(),
+			model: (scene) => this.scorch.apply(scene),
+			error: (msg) => this.on.status({ credits: "", groundError: msg, heightsReady: false, loading: 0, cars: this.traffic?.count ?? 0 }),
+		});
+		this.scene.add(this.ground.object);
+		this.heights.setTarget(this.ground.object);
 
-		this.fire = new FireFX(this.frame, this.heights);
+		this.fire = new FireFX(this.frame, this.heights, this.scorch);
 		this.fire.addTo(this.scene);
 		// Vehicles and drones wait for the GLBs so they're built from the real models.
 		loadModels().then(() => {
 			if (this.disposed) {
 				return;
 			}
-			this.drones = new DroneFX(this.frame, this.heights, opts.sensorCells);
+			this.drones = new DroneFX(this.frame, this.heights);
 			this.drones.addTo(this.scene);
 			this.traffic = new Traffic(this.frame, this.heights, this.fire);
 			this.traffic.addTo(this.scene);
 			this.traffic.setEnabled(this.trafficOn);
 			this.drones.selected = this.selected;
 			if (this.lastView) {
-				this.drones.setView(this.lastView);
+				this.drones.setView(this.lastView.view, this.lastView.units, this.lastView.radio);
 			}
 		});
 
@@ -134,34 +175,9 @@ export default class Engine {
 		this.loop();
 	}
 
-	// ---------- ground ----------
-
-	setGround(mode: GroundMode, force = false) {
-		if (this.ground && mode === this.groundMode && !force) {
-			return;
-		}
-		this.groundMode = mode;
-		if (this.ground) {
-			this.scene.remove(this.ground.object);
-			this.ground.dispose();
-		}
-		const useGoogle = mode === "photoreal" && !!this.opts.googleKey;
-		this.ground = useGoogle
-			? new GoogleGround(this.frame, this.opts.googleKey!, {
-					change: () => this.heights.invalidate(),
-					error: (msg) =>
-						this.on.status({ credits: "", groundError: msg, heightsReady: false, loading: 0, cars: this.traffic?.count ?? 0 }),
-				})
-			: new BlocksGround(this.frame, this.opts.satellite);
-		this.scene.add(this.ground.object);
-		this.heights.setTarget(this.ground.object);
-		this.framed = false;
-		this.settledPass = -1;
-	}
-
 	// Close over the centre, tilted ~45° and facing north, like opening a 3D city in Google Maps.
 	private frameCamera() {
-		const g = this.heights.base;
+		const g = this.framed ? this.heights.base : UNKNOWN_GROUND;
 		const span = Math.max(this.frame.w, this.frame.h) * this.frame.m;
 		const dist = Math.min(700, span * 0.45);
 		const tilt = Math.PI * 0.25;
@@ -169,6 +185,50 @@ export default class Engine {
 		this.camera.position.set(0, g + Math.cos(tilt) * dist, -Math.sin(tilt) * dist);
 		this.camera.lookAt(this.controls.target);
 		this.controls.update();
+	}
+
+	// Framing on a bad height is fatal: inside the hill the camera looks away from every tile, so nothing
+	// ever loads. Once the tiles settle, scan from scratch (a scan begun earlier still holds coarse-globe
+	// hits, km under the real surface) and only frame when two scans agree on a plausible height.
+	private trySettle() {
+		if (this.framed || !this.ground.ready) {
+			return;
+		}
+		const s = this.settle;
+		if (s.pass < 0) {
+			s.pass = this.heights.passes;
+			this.heights.restart();
+			return;
+		}
+		if (this.heights.passes <= s.pass || !this.heights.ready) {
+			return;
+		}
+		const base = this.heights.base;
+		const plausible = base > MIN_PLAUSIBLE_GROUND;
+		const agreed = plausible && Math.abs(base - s.lastBase) < SETTLE_TOLERANCE;
+		if (!agreed && s.scans < MAX_SETTLE_SCANS) {
+			s.lastBase = base;
+			s.scans++;
+			s.pass = this.heights.passes;
+			this.heights.restart();
+			return;
+		}
+		if (!plausible) {
+			this.heights.base = 0;
+		}
+		this.framed = true;
+		this.frameCamera();
+		this.statusAt = -Infinity; // tell the UI straight away so the loading cover lifts
+	}
+
+	// Ground meshes are invisible from below: never let the camera sink under the surface.
+	private keepAboveGround() {
+		const c = this.camera.position;
+		const y = this.heights.castAt(-c.x, c.z);
+		const floor = (y ?? this.heights.base) + MIN_CLEARANCE;
+		if (c.y < floor) {
+			c.y = floor;
+		}
 	}
 
 	// Keep the look-at point over the area and on the ground, so panning can't wander off into the void.
@@ -192,22 +252,14 @@ export default class Engine {
 
 	// ---------- sim input ----------
 
-	setView(view: WorldView) {
+	setView(view: WorldView, units: Record<string, UnitInfo>, radio: RadioBeam[]) {
 		this.fire.setCells(view.cells, view.wind);
-		this.lastView = view;
-		this.drones?.setView(view);
+		this.lastView = { view, units, radio };
+		this.drones?.setView(view, units, radio);
 	}
 
 	reset() {
 		this.fire.reset();
-	}
-
-	// Satellite imagery arrives after the map; the blocks ground is rebuilt to show it.
-	setSatellite(canvas: HTMLCanvasElement | null) {
-		this.opts.satellite = canvas;
-		if (this.groundMode === "blocks") {
-			this.setGround("blocks", true);
-		}
 	}
 
 	setCamera(mode: CamMode) {
@@ -300,10 +352,12 @@ export default class Engine {
 			return false;
 		}
 		const yaw = this.drones.heading(id);
+		const at = this.drones.lookAt(id) ?? p;
 		this.eye.position.copy(p).setY(p.y - 1.5);
-		// Straight down, with the top of the frame pointing where the drone is heading.
+		// Down at what the sim says it sees (a loitering fixed-wing's gimbal tracks its orbit centre),
+		// with the top of the frame pointing where the drone is heading.
 		this.eye.up.set(Math.sin(yaw), 0, Math.cos(yaw));
-		this.eye.lookAt(p.x, p.y - 100, p.z);
+		this.eye.lookAt(at.x, Math.min(this.heights.base, at.y - 20), at.z);
 		this.eye.updateMatrixWorld();
 		return true;
 	}
@@ -327,16 +381,7 @@ export default class Engine {
 		const now = this.clock.elapsedTime;
 
 		this.heights.step(500);
-		// Once the tiles settle, rescan heights over the full-detail mesh, then frame on that.
-		if (this.settledPass < 0 && this.ground.ready) {
-			this.settledPass = this.heights.passes;
-			this.heights.invalidate();
-		}
-		if (!this.framed && this.settledPass >= 0 && this.heights.passes > this.settledPass && this.heights.ready) {
-			this.framed = true;
-			this.frameCamera();
-			this.statusAt = -Infinity; // tell the UI straight away so the loading cover lifts
-		}
+		this.trySettle();
 		// Re-seat ground decals as the height map refines.
 		if (Math.floor(now * 2) !== Math.floor((now - dt) * 2)) {
 			this.fire.relayout();
@@ -352,11 +397,17 @@ export default class Engine {
 			this.controls.update();
 			this.clampTarget();
 		}
+		if (this.framed && this.cam !== "drone") {
+			this.keepAboveGround();
+		}
+		this.sky.material.uniforms.time.value = now;
 		const hasEye = this.placeEye();
 		this.camera.updateMatrixWorld();
 
-		const cams = hasEye ? [this.camera, this.eye] : [this.camera];
-		this.ground.update(cams, this.renderer);
+		// Tiles stream for ONE camera: the one filling the screen. Feeding the inset's low drone camera too made
+		// the tiles renderer keep loading (and BVH-indexing) street-level detail under every moving drone.
+		const lead = this.cam === "drone" && hasEye ? this.eye : this.camera;
+		this.ground.update([lead], this.renderer);
 
 		const r = this.renderer;
 		const size = r.getSize(new Vector2());
@@ -402,8 +453,11 @@ export default class Engine {
 		el.removeEventListener("contextmenu", this.onContext);
 		this.host.removeEventListener("wheel", this.onWheel);
 		this.controls.dispose();
+		this.sky.geometry.dispose();
+		this.sky.material.dispose();
 		this.ground.dispose();
 		this.fire.dispose();
+		this.scorch.dispose();
 		this.drones?.dispose();
 		this.traffic?.dispose();
 		this.renderer.dispose();

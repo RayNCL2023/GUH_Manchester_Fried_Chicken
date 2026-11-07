@@ -2,19 +2,37 @@
 // on terrain rasterised from OpenStreetMap. Roads and water act as firebreaks.
 import { HiveBrain } from "@mfc/engine";
 import { SimWorld, type SimMetrics } from "@mfc/engine/sim";
-import type { CellState, ChatterBody, Control, Vec, WorldView } from "../../../../shared/types";
+import type { CellState, ChatterBody, Control, MsgKind, Vec, WorldView } from "../../../../shared/types";
 import { FUEL, T, type LoadedArea } from "./osm";
 import { bearing } from "./pixel";
+import { ALTITUDE_M, SkyBrain, WaterBrain, type UnitInfo } from "./roles";
 import type { Chatter, Live, StatItem } from "./types";
 
-const RANGE = 12;
+// Real mesh radios (900 MHz / 2.4 GHz with clear line of sight between drones) carry well over a km.
+const RADIO_M = 1500;
+export const JAM_M = 120;
 export const SENSOR = 7;
-const AGENTS = 12;
+const TASK_RANGE = 12;
+const ECHOES = 10;
+const SKIES = 2;
+const WATERS = 2;
+const SKY_HALF_FOV = (40 * Math.PI) / 180;
 const LOOP_TICKS = 6000;
 const WIND: Vec = { x: 0.8, y: -0.5 };
+// Water: chance per tick each burning cell under the jet is knocked down, and how long soaked fuel resists.
+const SPRAY_R = 1.8;
+const KNOCKDOWN = 0.22;
+const WET_R = 3;
+const WET_TICKS = 400;
+
+// One beam per drone pair per tick: the most important thing that went over it.
+export type RadioBeam = { from: string; to: string; kind: MsgKind; ok: boolean };
+const KIND_RANK: Record<MsgKind, number> = { goal: 5, claim: 4, release: 3, map: 2, chatter: 1, heartbeat: 0 };
 
 export type FireSnap = {
 	view: WorldView;
+	units: Record<string, UnitInfo>;
+	radio: RadioBeam[];
 	terrain: Uint8Array;
 	headline: number;
 	history: number[];
@@ -28,42 +46,76 @@ export default class FireLive implements Live<FireSnap> {
 	private chatter: Chatter[] = [];
 	private history: number[] = [];
 	private inspectId: string | null = null;
-	private goalSeq = 0;
 	private buildingCells: number;
+	private wet!: Int32Array;
+	private knockedDown = 0;
+	private beams = new Map<string, RadioBeam>();
+	readonly radioCells: number;
+	readonly skySensor: number;
 
 	constructor(
 		private area: LoadedArea,
 		private seed = 3,
 	) {
 		this.buildingCells = area.terrain.reduce((n, t) => n + (t === T.building ? 1 : 0), 0);
+		this.radioCells = Math.round(RADIO_M / area.mPerCell);
+		this.skySensor = Math.round((ALTITUDE_M.sky * Math.tan(SKY_HALF_FOV)) / area.mPerCell);
 		this.reset();
 	}
 
 	reset() {
 		const { width, height, terrain } = this.area;
+		const range = this.radioCells;
+		const base = this.baseCell();
+		const refills = this.waterCells();
+		const roster = [
+			...Array.from({ length: ECHOES }, (_, i) => ({ id: `Echo-${i + 1}` })),
+			...Array.from({ length: SKIES }, (_, i) => ({ id: `Sky-${i + 1}`, sensorRadius: this.skySensor, speed: 1.6 })),
+			...Array.from({ length: WATERS }, (_, i) => ({ id: `Water-${i + 1}`, speed: 0.8 })),
+		];
 		this.sim = new SimWorld({
 			width,
 			height,
-			agents: AGENTS,
+			agents: roster.length,
+			roster,
 			seed: this.seed,
 			lossPct: 30,
 			wind: { ...WIND },
 			jamZones: [],
-			spread: 0.045,
+			spread: 0.025,
 			sensorRadius: SENSOR,
-			radioRange: RANGE,
-			makeBrain: () => new HiveBrain({ width, height, seed: this.seed, radioRange: RANGE }),
+			sensorSquare: true,
+			radioRange: range,
+			taskRange: TASK_RANGE,
+			makeBrain: (id) => {
+				const n = Number(id.split("-")[1]) - 1;
+				if (id.startsWith("Sky-")) {
+					return new SkyBrain(width, height, this.seed, range, n, SKIES, this.skySensor);
+				}
+				if (id.startsWith("Water-")) {
+					return new WaterBrain(width, height, this.seed, range, SENSOR, refills, base, () => this.sim.cfg.wind);
+				}
+				return new HiveBrain({ width, height, seed: this.seed, radioRange: range });
+			},
 		});
+		this.wet = new Int32Array(width * height);
+		this.knockedDown = 0;
 
 		// Replace the default map with real terrain: buildings are what the flock protects.
 		this.sim.cells = Array.from(terrain, (t): CellState => (t === T.building ? "village" : "clear"));
 		this.sim.burnAge.fill(0);
 
-		const base = this.baseCell();
 		this.sim.agents.forEach((a, i) => {
 			a.pos = { x: base.x + (i % 5), y: base.y - Math.floor(i / 5) };
 		});
 
+		this.sim.onLink = (from, to, kind, ok) => {
+			const key = `${from}>${to}`;
+			const prev = this.beams.get(key);
+			if (!prev || KIND_RANK[kind] > KIND_RANK[prev.kind] || (ok && !prev.ok)) {
+				this.beams.set(key, { from, to, kind, ok });
+			}
+		};
 		this.sim.onSend = (from, m) => {
 			if (m.kind !== "chatter") {
 				return;
@@ -94,10 +146,24 @@ export default class FireLive implements Live<FireSnap> {
 		return { x: 2, y: height - 3 };
 	}
 
+	// Open water the firefighters can refill from (sampled so the list stays short).
+	private waterCells(): Vec[] {
+		const { width, terrain } = this.area;
+		const out: Vec[] = [];
+		for (let i = 0; i < terrain.length; i += 7) {
+			if (terrain[i] === T.water) {
+				out.push({ x: i % width, y: Math.floor(i / width) });
+			}
+		}
+		return out;
+	}
+
 	step() {
 		const before = this.sim.cells;
+		this.beams.clear();
 		this.sim.step();
 		this.applyFuel(before);
+		this.spray();
 		this.metrics = this.sim.metrics();
 
 		if (this.sim.tick % 5 === 0) {
@@ -115,9 +181,38 @@ export default class FireLive implements Live<FireSnap> {
 	private applyFuel(before: CellState[]) {
 		const after = this.sim.cells;
 		const { terrain } = this.area;
+		const tick = this.sim.tick;
 		for (let i = 0; i < after.length; i++) {
-			if (after[i] === "fire" && before[i] !== "fire" && Math.random() > FUEL[terrain[i]]) {
+			if (after[i] === "fire" && before[i] !== "fire" && (Math.random() > FUEL[terrain[i]] || this.wet[i] > tick)) {
 				after[i] = before[i];
+			}
+		}
+	}
+
+	// Water drones on station knock down the flames under their jet and soak the fuel around it.
+	private spray() {
+		const { width, height } = this.area;
+		const cells = this.sim.cells;
+		const tick = this.sim.tick;
+		for (const a of this.sim.agents) {
+			const b = a.brain;
+			if (!a.alive || !(b instanceof WaterBrain) || !b.spraying || !b.aim) {
+				continue;
+			}
+			const { x: ax, y: ay } = b.aim;
+			for (let y = Math.floor(ay - WET_R); y <= ay + WET_R; y++) {
+				for (let x = Math.floor(ax - WET_R); x <= ax + WET_R; x++) {
+					const d = Math.hypot(x - ax, y - ay);
+					if (x < 0 || y < 0 || x >= width || y >= height || d > WET_R) {
+						continue;
+					}
+					const i = y * width + x;
+					this.wet[i] = tick + WET_TICKS;
+					if (cells[i] === "fire" && d <= SPRAY_R && Math.random() < KNOCKDOWN) {
+						cells[i] = "burnt";
+						this.knockedDown++;
+					}
+				}
 			}
 		}
 	}
@@ -178,35 +273,6 @@ export default class FireLive implements Live<FireSnap> {
 		this.control({ type: "setWind", wind: { x: Math.cos(a) * m, y: Math.sin(a) * m } });
 	}
 
-	// Goal at the standing building closest to the fire. It reaches ONE drone; the rest hear it by gossip.
-	protectBuildings() {
-		const { width } = this.area;
-		const cells = this.sim.cells;
-		const fire = cells.flatMap((c, i) => (c === "fire" ? [i] : []));
-		const centre = fire.length
-			? { x: fire.reduce((s, i) => s + (i % width), 0) / fire.length, y: fire.reduce((s, i) => s + Math.floor(i / width), 0) / fire.length }
-			: { x: width / 2, y: this.area.height / 2 };
-
-		let target: Vec | null = null;
-		let best = Infinity;
-		cells.forEach((c, i) => {
-			const p = { x: i % width, y: Math.floor(i / width) };
-			const d = Math.hypot(p.x - centre.x, p.y - centre.y);
-			if (c === "village" && d < best) {
-				best = d;
-				target = p;
-			}
-		});
-		if (!target) {
-			return;
-		}
-
-		this.control({
-			type: "goal",
-			body: { id: `goal-${++this.goalSeq}`, text: "Protect the buildings", target, radius: 8, priority: 3 },
-		});
-	}
-
 	snapshot(): FireSnap {
 		const s = this.sim;
 		const { width, height, radioRange } = s.cfg;
@@ -230,8 +296,17 @@ export default class FireLive implements Live<FireSnap> {
 		const { terrain } = this.area;
 		const lost = s.cells.reduce((n, c, i) => n + (terrain[i] === T.building && c !== "village" ? 1 : 0), 0);
 
+		const units: Record<string, UnitInfo> = {};
+		for (const a of s.agents) {
+			const b = a.brain;
+			units[a.id] = b instanceof SkyBrain || b instanceof WaterBrain ? b.info() : { role: "echo", sensor: SENSOR };
+		}
+		const spraying = s.agents.filter((a) => a.alive && a.brain instanceof WaterBrain && a.brain.spraying).length;
+
 		return {
 			terrain,
+			units,
+			radio: [...this.beams.values()],
 			view: {
 				tick: s.tick,
 				scenario: "fire",
@@ -269,6 +344,8 @@ export default class FireLive implements Live<FireSnap> {
 				{ label: "Messages sent", value: m.messagesSent.toLocaleString("en-GB") },
 				{ label: "Duplicate claims", value: m.duplicateClaims },
 				{ label: "Message loss", value: s.cfg.lossPct, unit: "%" },
+				{ label: "Water drones spraying", value: spraying, unit: `/ ${WATERS}` },
+				{ label: "Fire knocked down", value: this.knockedDown, unit: "cells" },
 				{ label: "Wind bearing", value: bearing(s.cfg.wind), unit: "°" },
 				{
 					label: "Buildings lost",

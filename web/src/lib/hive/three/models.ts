@@ -20,7 +20,7 @@ import {
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/addons/utils/SkeletonUtils.js";
 
-export type Kind = "car" | "fireEngine" | "drone";
+export type Kind = "car" | "fireEngine" | "drone" | "uav";
 
 // GLBs in /public/models (credits in /public/models/CREDITS.md). length = real-world metres;
 // weight = how often it turns up in traffic. All of these face +Z already.
@@ -42,6 +42,8 @@ export const MODEL_FILES: Record<Kind, ModelFile[]> = {
 	],
 	fireEngine: [{ url: "/models/emergency/firetruck.glb", length: 8 }],
 	drone: [{ url: "/models/drones/quadcopter.glb", length: 0.6 }],
+	// Predator-style fixed wing for the high scouts; nose along +Z (wings sit forward, pusher prop at -Z).
+	uav: [{ url: "/models/drones/military-uav.glb", length: 14 }],
 };
 
 const ROTOR = /prop|rotor|blade/i;
@@ -193,9 +195,34 @@ export function makeFireEngine(): FireEngine {
 
 // ---------- drone ----------
 
-export type Drone = { object: Object3D; rotors: Object3D[]; led: MeshBasicMaterial };
+export type Drone = { object: Object3D; rotors: Object3D[]; led: MeshBasicMaterial; fixedWing: boolean };
+export type DroneRole = "echo" | "sky" | "water";
 
 const DRONE_SCALE = 3; // real ~0.5 m; scaled up so the flock reads from a few hundred metres
+const WATER_SCALE = 5; // heavy-lift firefighter, ~2.5 m across with its tank
+const tankMat = new MeshStandardMaterial({ color: 0xc8161d, roughness: 0.45, metalness: 0.3 });
+const nozzleMat = new MeshStandardMaterial({ color: 0xd9dde3, roughness: 0.3, metalness: 0.8 });
+const tankGeo = new CylinderGeometry(0.11, 0.11, 0.42, 16).rotateX(Math.PI / 2);
+const nozzleGeo = new CylinderGeometry(0.015, 0.025, 0.22, 8);
+
+// Fixed-wing scout. Falls back to a simple cross-shaped airframe if the GLB is missing.
+function makeUav(colour: string): Drone {
+	const g = new Group();
+	const led = new MeshBasicMaterial({ color: new Color(colour) });
+	const fromFile = fromTemplate("uav");
+	if (fromFile) {
+		g.add(fromFile);
+	} else {
+		const body = paint(0xb9bec4);
+		g.add(part(body, 0.9, 0.9, 8, 0, 0, 0));
+		g.add(part(body, 14, 0.15, 1.1, 0, 0.2, 0.8));
+		g.add(part(body, 3.5, 0.12, 0.7, 0, 0.3, -3.6));
+	}
+	const ledMesh = new Mesh(new SphereGeometry(0.35, 8, 6), led);
+	ledMesh.position.set(0, -0.4, 1.5);
+	g.add(ledMesh);
+	return { object: g, rotors: [], led, fixedWing: true };
+}
 const droneBody = new MeshStandardMaterial({ color: 0x2a2d33, roughness: 0.5, metalness: 0.4 });
 const droneArm = new MeshStandardMaterial({ color: 0x3b3f47, roughness: 0.6 });
 const discGeo = new CircleGeometry(0.3, 20).rotateX(-Math.PI / 2);
@@ -203,7 +230,10 @@ const bladeGeo = new BoxGeometry(0.58, 0.01, 0.05);
 const discMat = new MeshBasicMaterial({ color: 0xcfd6e0, transparent: true, opacity: 0.18, side: DoubleSide, depthWrite: false });
 const motorGeo = new CylinderGeometry(0.05, 0.06, 0.08, 10);
 
-export function makeDrone(colour: string): Drone {
+export function makeDrone(colour: string, role: DroneRole = "echo"): Drone {
+	if (role === "sky") {
+		return makeUav(colour);
+	}
 	const g = new Group();
 	const led = new MeshBasicMaterial({ color: new Color(colour) });
 	const fromFile = fromTemplate("drone");
@@ -243,6 +273,15 @@ export function makeDrone(colour: string): Drone {
 	const ledMesh = new Mesh(new SphereGeometry(0.06, 8, 6), led);
 	ledMesh.position.set(0, -0.06, 0.12);
 	g.add(ledMesh);
-	g.scale.setScalar(DRONE_SCALE);
-	return { object: g, rotors, led };
+	if (role === "water") {
+		// Slung tank and a forward-angled nozzle under the airframe.
+		const tank = new Mesh(tankGeo, tankMat);
+		tank.position.set(0, -0.2, -0.05);
+		const nozzle = new Mesh(nozzleGeo, nozzleMat);
+		nozzle.position.set(0, -0.32, 0.18);
+		nozzle.rotation.x = 0.6;
+		g.add(tank, nozzle);
+	}
+	g.scale.setScalar(role === "water" ? WATER_SCALE : DRONE_SCALE);
+	return { object: g, rotors, led, fixedWing: false };
 }

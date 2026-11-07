@@ -30,7 +30,8 @@ export interface MapBody { cells: CellObs[] }
 // Used by both "claim" and "release" messages. Lower score wins; tie -> lower agent id.
 export interface ClaimBody { taskId: string; claimant: AgentId; ts: number; score: number }
 export interface HeartbeatBody { pos: Vec; claim: string | null; windEstimate?: Vec }
-export interface GoalBody { id: string; text: string; target?: Vec; radius?: number; priority: number } // from voice command
+export interface GoalBody { id: string; text: string; target?: Vec; radius?: number; priority: number; // from voice command
+  assignees?: AgentId[] }        // optional crew: only these agents are pulled to it (others still hear and relay it)
 export interface ChatterBody { line: string }                                // spoken by voice layer
 
 // ---------- Server -> agent, every tick ----------

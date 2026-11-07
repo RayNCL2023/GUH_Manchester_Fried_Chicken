@@ -18,6 +18,12 @@ export interface SimConfig {
     spread: number;
     burnTicks: number;
     makeBrain: (id: AgentId) => AgentBrain;
+    /** Explicit fleet: ids plus per-drone sensor radius / speed (cells per tick). Overrides `agents`. */
+    roster?: { id: AgentId; sensorRadius?: number; speed?: number }[];
+    /** Square sensor footprint (a downward camera) instead of a disc. */
+    sensorSquare?: boolean;
+    /** Radius within which the world hands agents edge tasks (defaults to radioRange). */
+    taskRange?: number;
 }
 
 interface SimAgent {
@@ -27,6 +33,8 @@ interface SimAgent {
     brain: AgentBrain;
     inbox: Msg[];
     claim: string | null;
+    sensorRadius: number;
+    speed: number;
 }
 
 export interface SimMetrics {
@@ -40,6 +48,8 @@ export interface SimMetrics {
     messagesSent: number;
     messagesDelivered: number;
 }
+
+const MAX_INBOX = 1500;
 
 export const DEFAULT_SIM: Omit<SimConfig, "makeBrain"> = {
     width: 60,
@@ -69,6 +79,8 @@ export class SimWorld {
     private ctlSeq = 0;
     /** Hook: called for every message an agent sends (used to record chatter). */
     onSend?: (from: AgentId, m: Omit<Msg, "from">) => void;
+    /** Hook: every transmission between two drones in radio range. ok = false when a jammer blocked it. */
+    onLink?: (from: AgentId, to: AgentId, kind: Msg["kind"], ok: boolean) => void;
 
     constructor(cfg: Partial<SimConfig> & Pick<SimConfig, "makeBrain">) {
         this.cfg = { ...DEFAULT_SIM, ...cfg };
@@ -76,12 +88,22 @@ export class SimWorld {
         this.rng = mulberry32(this.cfg.seed);
         this.cells = initFireMap(width, height);
         this.burnAge = new Int32Array(width * height);
-        for (let n = 0; n < this.cfg.agents; n++) {
-            const id = `Echo-${n + 1}`;
-            const brain = this.cfg.makeBrain(id);
-            brain.init(id, "fire");
-            this.agents.push({ id, pos: { x: 2 + (n % 4), y: 36 + Math.floor(n / 4) }, alive: true, brain, inbox: [], claim: null });
-        }
+        const roster: NonNullable<SimConfig["roster"]> =
+            this.cfg.roster ?? Array.from({ length: this.cfg.agents }, (_, n) => ({ id: `Echo-${n + 1}` }));
+        roster.forEach((r, n) => {
+            const brain = this.cfg.makeBrain(r.id);
+            brain.init(r.id, "fire");
+            this.agents.push({
+                id: r.id,
+                pos: { x: 2 + (n % 4), y: 36 + Math.floor(n / 4) },
+                alive: true,
+                brain,
+                inbox: [],
+                claim: null,
+                sensorRadius: r.sensorRadius ?? this.cfg.sensorRadius,
+                speed: r.speed ?? 1,
+            });
+        });
     }
 
     cell(x: number, y: number): CellState {
@@ -119,15 +141,15 @@ export class SimWorld {
         this.cells = stepFire(this.cells, this.burnAge, this.cfg, this.cfg.wind, this.rng);
     }
 
-    private nearbyCells(p: Vec): CellObs[] {
-        const r = this.cfg.sensorRadius;
+    private nearbyCells(p: Vec, r: number): CellObs[] {
+        const square = !!this.cfg.sensorSquare;
         const out: CellObs[] = [];
         const cx = Math.round(p.x);
         const cy = Math.round(p.y);
         for (let y = cy - r; y <= cy + r; y++) {
             for (let x = cx - r; x <= cx + r; x++) {
                 const s = this.cell(x, y);
-                if (s === "unknown" || Math.hypot(x - cx, y - cy) > r) {
+                if (s === "unknown" || (!square && Math.hypot(x - cx, y - cy) > r)) {
                     continue;
                 }
                 out.push({ x, y, state: s, ts: this.tick, by: "sensor" });
@@ -138,7 +160,7 @@ export class SimWorld {
 
     private tasksFor(p: Vec): Task[] {
         const out: Task[] = [];
-        const r = this.cfg.radioRange;
+        const r = this.cfg.taskRange ?? this.cfg.radioRange;
         const { width } = this.cfg;
         for (let y = Math.max(0, Math.floor(p.y - r)); y <= Math.min(this.cfg.height - 1, p.y + r); y++) {
             for (let x = Math.max(0, Math.floor(p.x - r)); x <= Math.min(width - 1, p.x + r); x++) {
@@ -176,7 +198,7 @@ export class SimWorld {
                 tick: this.tick,
                 scenario: "fire",
                 self: { id: a.id, pos: { ...a.pos }, alive: true, jammed: this.jammed(a.pos), isPhone: false },
-                nearbyCells: this.nearbyCells(a.pos),
+                nearbyCells: this.nearbyCells(a.pos, a.sensorRadius),
                 neighbours,
                 inbox: a.inbox,
                 tasks: this.tasksFor(a.pos),
@@ -192,7 +214,7 @@ export class SimWorld {
             }
             a.claim = act.claimed ?? null;
             this.route(a, act);
-            this.move(a, act.moveTo);
+            this.move(a, act.moveTo, a.speed);
         }
         this.trackDuplicates();
     }
@@ -203,25 +225,33 @@ export class SimWorld {
             this.onSend?.(a.id, m);
             for (const b of this.agents) {
                 if (!this.linked(a, b)) {
+                    if (this.onLink && b !== a && b.alive && dist(a.pos, b.pos) <= this.cfg.radioRange) {
+                        this.onLink(a.id, b.id, m.kind, false);
+                    }
                     continue;
                 }
                 if (this.rng() * 100 < this.cfg.lossPct) {
                     continue;
                 }
+                // Radio airtime is finite: a storm of messages drops instead of piling up in memory.
+                if (b.inbox.length >= MAX_INBOX) {
+                    continue;
+                }
                 b.inbox.push({ ...m, from: a.id });
+                this.onLink?.(a.id, b.id, m.kind, true);
                 this.messagesDelivered++;
             }
         }
     }
 
-    private move(a: SimAgent, to?: Vec): void {
+    private move(a: SimAgent, to: Vec | undefined, speed: number): void {
         if (!to) {
             return;
         }
         const dx = to.x - a.pos.x;
         const dy = to.y - a.pos.y;
         const d = Math.hypot(dx, dy);
-        const k = d > 1 ? 1 / d : 1;
+        const k = d > speed ? speed / d : 1;
         a.pos.x = Math.max(0, Math.min(this.cfg.width - 1, a.pos.x + dx * k));
         a.pos.y = Math.max(0, Math.min(this.cfg.height - 1, a.pos.y + dy * k));
     }

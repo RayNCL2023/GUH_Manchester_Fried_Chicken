@@ -12,6 +12,7 @@ export const C = {
 	amber: "#ffb020",
 	glow: "#fff0c0",
 	flock: "#5aa9ff",
+	water: "#4fd1e8",
 	dead: "#4a4a52",
 };
 
@@ -24,6 +25,15 @@ export const ART_COLORS: Record<string, string> = {
 	b: C.flock,
 	t: C.text,
 	m: C.mute,
+	// Second half of the 4-bit palette, for pictures sent over the sound uplink.
+	k: C.dead,
+	s: "#f4c7a1",
+	n: "#8a5634",
+	g: "#4cc26a",
+	d: "#1f7a3e",
+	p: "#ff8fc0",
+	v: "#9b6bff",
+	c: "#2b4fd8",
 };
 
 export const MODE_COLOR: Record<string, string> = {
@@ -155,3 +165,114 @@ export function bearing(v: Vec) {
 export const pad = (n: number) => String(n).padStart(2, "0");
 
 export const hash = (x: number, y: number) => ((x * 73856093) ^ (y * 19349663)) >>> 0;
+
+// 16×16 presets for the sound uplink (4 bits a pixel, 136 B with the header).
+export const UPLINK_SIZE = 16;
+export const BLANK_ART = Array.from({ length: UPLINK_SIZE }, () => ".".repeat(UPLINK_SIZE));
+export const UPLINK_PICTURES = [
+	{
+		name: "Flame",
+		art: [
+			".......o........",
+			".......oo.......",
+			"......ooo.......",
+			"......oooo...o..",
+			".....ooooo..oo..",
+			"....oooyooo.oo..",
+			"....ooyyyoooooo.",
+			"...oooyyyyoooo..",
+			"..ooyyyyyyyooo..",
+			"..ooyyywyyyyoo..",
+			".ooyyywwwyyyyoo.",
+			".ooyywwwwwyyyoo.",
+			".royywwwwwwyyor.",
+			".rooyywwwwyyoor.",
+			"..rrooyyyyyoorr.",
+			"...rrrrrrrrrrr..",
+		],
+	},
+	{
+		name: "Heart",
+		art: [
+			"................",
+			"..rrrr....rrrr..",
+			".rrrrrr..rrrrrr.",
+			"rrppprrrrrrrrrrr",
+			"rrpprrrrrrrrrrrr",
+			"rrprrrrrrrrrrrrr",
+			"rrrrrrrrrrrrrrrr",
+			".rrrrrrrrrrrrrr.",
+			"..rrrrrrrrrrrr..",
+			"...rrrrrrrrrr...",
+			"....rrrrrrrr....",
+			".....rrrrrr.....",
+			"......rrrr......",
+			".......rr.......",
+			"................",
+			"................",
+		],
+	},
+	{
+		name: "Drone",
+		art: [
+			".mmm........mmm.",
+			"mmrmm......mmbmm",
+			".mmmk......kmmm.",
+			"...kk......kk...",
+			"....kk....kk....",
+			".....kkkkkk.....",
+			".....kcccck.....",
+			".....kcbbck.....",
+			".....kcbbck.....",
+			".....kcccck.....",
+			".....kkkkkk.....",
+			"....kk....kk....",
+			"...kk......kk...",
+			".mmmk......kmmm.",
+			"mmbmm......mmrmm",
+			".mmm........mmm.",
+		],
+	},
+	{
+		name: "Tree",
+		art: [
+			".......gg.......",
+			"......gggg......",
+			".....ggdggg.....",
+			"....gggggdgg....",
+			"...ggdgggggggg..",
+			"....gggggggg....",
+			"...ggggdggggg...",
+			"..gggggggggdgg..",
+			".ggdgggggggggggg",
+			"..gggggggdggg...",
+			"...ggggggggg....",
+			".......nn.......",
+			".......nn.......",
+			".......nn.......",
+			".....nnnnnn.....",
+			"................",
+		],
+	},
+	{
+		name: "Smile",
+		art: [
+			"................",
+			".....yyyyyy.....",
+			"...yyyyyyyyyy...",
+			"..yyyyyyyyyyyy..",
+			".yyyykyyyykyyyy.",
+			".yyyykyyyykyyyy.",
+			"yyyyykyyyykyyyyy",
+			"yyyyyyyyyyyyyyyy",
+			"yyppyyyyyyyyppyy",
+			"yyyykyyyyyykyyyy",
+			".yyyykyyyykyyyy.",
+			".yyyyykkkkyyyyy.",
+			"..yyyyyyyyyyyy..",
+			"...yyyyyyyyyy...",
+			".....yyyyyy.....",
+			"................",
+		],
+	},
+];
