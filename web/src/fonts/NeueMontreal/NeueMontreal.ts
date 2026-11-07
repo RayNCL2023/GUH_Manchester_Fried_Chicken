@@ -37,6 +37,7 @@ const NeueMontreal = localFont({
             style: 'italic',
         },
     ],  
+    variable: '--font-neue-montreal',
     display: 'swap',
 });
 

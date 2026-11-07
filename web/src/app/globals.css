@@ -1,6 +1,18 @@
 @import "tailwindcss";
 @config "../../tailwind.config.ts";
 
+/* Hive palette: graphite neutrals, fire orange, flock blue */
+@theme {
+    --color-ink: #0f0f11;
+    --color-panel: #17171a;
+    --color-line: #2a2a2f;
+    --color-mute: #8b8b94;
+    --color-fire: #ff5a1f;
+    --color-amber: #ffb020;
+    --color-flock: #5aa9ff;
+    --font-display: var(--font-nitlix-one), var(--font-neue-montreal), sans-serif;
+}
+
 @layer base {
     :root {
         --spacing: 7rem;
@@ -41,7 +53,7 @@
     h3,
     h4,
     h5 {
-        @apply leading-[1.1];
+        @apply leading-[1.1] font-display;
     }
 
     h1 {

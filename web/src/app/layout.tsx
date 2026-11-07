@@ -18,21 +18,21 @@ import "@/backbone/themes.scss";
 // =====================
 // Geist Font (By Vercel)
 // =====================
-import { GeistSans } from "@/fonts/Geist/GeistSans";
+import NeueMontreal from "@/fonts/NeueMontreal/NeueMontreal";
+import { NitlixOne } from "@/fonts/NitlixOne/NitlixOne";
 
 // =====================
 // Custom Font (Neue Montreal)
 // =====================
-// import NeueMontreal from "@/fonts/NeueMontreal/NeueMontreal";
 
 // =====================
 // Metadata Export
 // =====================
 import { metaGen, setDefaults } from "nitlix-metagen";
 setDefaults({
-    title: "Nitlix Prebuilt App",
+    title: "Hive",
     description:
-        "This is the default description for the NNT Next.JS template. Feel free to change it.",
+        "Keep the flock flying when the link drops.",
 });
 export const metadata = metaGen();
 
@@ -52,10 +52,10 @@ export default async function RootLayout({
 }) {
     return (
         <html lang="en" suppressHydrationWarning>
-            <Backbone className={GeistSans.className}>
+            <Backbone className={`${NeueMontreal.className} ${NeueMontreal.variable} ${NitlixOne.variable}`}>
                 {/* Feel free to remove the code below if you don't wish to use AOS */}
                 <Aos />
-                <ThemeProvider defaultTheme="system">
+                <ThemeProvider forcedTheme="dark">
                     <main className="_nitlix" data-scroll-container>
                         {children}
                     </main>
