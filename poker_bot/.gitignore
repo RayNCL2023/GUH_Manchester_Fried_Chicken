@@ -17,3 +17,4 @@ site_out/
 !myteam.pkl
 results/
 checkpoints/
+!manchester_fried_chicken.pkl
