@@ -1,0 +1,11 @@
+{
+    "css.customData": [".vscode/tailwind.json"],
+    "tailwindCSS.experimental.configFile": {
+        "src/app/globals.css": "src/**"
+    },
+    "tailwindCSS.includeLanguages": {
+        "typescript": "typescript",
+        "typescriptreact": "typescriptreact"
+    },
+    "tailwindCSS.lint.suggestCanonicalClasses": "ignore"
+}
