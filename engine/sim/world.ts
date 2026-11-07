@@ -1,6 +1,7 @@
 // Headless in-process world for testing/tuning/training brains. Mirrors the server's rules:
 // sensor radius 3, radio range 8, jam zones block, global loss %, 1 cell/tick movement, msgs arrive next tick.
 import type { Action, AgentBrain, AgentId, CellObs, CellState, GoalBody, Msg, Sense, Task, Vec } from "../../shared/types";
+import { initFireMap, isEdge, stepFire } from "../fire";
 import { dist, mulberry32, type Rng } from "../util";
 
 export interface SimConfig {
@@ -73,18 +74,8 @@ export class SimWorld {
         this.cfg = { ...DEFAULT_SIM, ...cfg };
         const { width, height } = this.cfg;
         this.rng = mulberry32(this.cfg.seed);
-        this.cells = new Array<CellState>(width * height).fill("clear");
+        this.cells = initFireMap(width, height);
         this.burnAge = new Int32Array(width * height);
-        for (let y = 27; y < 30; y++) {
-            for (let x = 16; x < 19; x++) {
-                this.cells[y * width + x] = "village";
-            }
-        }
-        for (let y = 12; y < 14; y++) {
-            for (let x = 30; x < 32; x++) {
-                this.cells[y * width + x] = "fire";
-            }
-        }
         for (let n = 0; n < this.cfg.agents; n++) {
             const id = `Echo-${n + 1}`;
             const brain = this.cfg.makeBrain(id);
@@ -101,11 +92,7 @@ export class SimWorld {
     }
 
     isEdge(x: number, y: number): boolean {
-        if (this.cell(x, y) !== "fire") {
-            return false;
-        }
-        const n = [this.cell(x + 1, y), this.cell(x - 1, y), this.cell(x, y + 1), this.cell(x, y - 1)];
-        return n.some((s) => s === "clear" || s === "village");
+        return isEdge(this.cells, this.cfg.width, this.cfg.height, x, y);
     }
 
     jammed(p: Vec): boolean {
@@ -129,41 +116,7 @@ export class SimWorld {
     }
 
     private stepFire(): void {
-        const { width, height, wind, spread, burnTicks } = this.cfg;
-        const next = this.cells.slice();
-        const wl = Math.hypot(wind.x, wind.y);
-        const dirs = [
-            [1, 0],
-            [-1, 0],
-            [0, 1],
-            [0, -1],
-        ] as const;
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const i = y * width + x;
-                if (this.cells[i] !== "fire") {
-                    continue;
-                }
-                this.burnAge[i]!++;
-                if (this.burnAge[i]! >= burnTicks) {
-                    next[i] = "burnt";
-                }
-                for (const [dx, dy] of dirs) {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    const s = this.cell(nx, ny);
-                    if (s !== "clear" && s !== "village") {
-                        continue;
-                    }
-                    const along = wl ? (dx * wind.x + dy * wind.y) / wl : 0;
-                    const p = spread * Math.max(0.15, 1 + along * Math.min(wl, 2));
-                    if (this.rng() < p) {
-                        next[ny * width + nx] = "fire";
-                    }
-                }
-            }
-        }
-        this.cells = next;
+        this.cells = stepFire(this.cells, this.burnAge, this.cfg, this.cfg.wind, this.rng);
     }
 
     private nearbyCells(p: Vec): CellObs[] {

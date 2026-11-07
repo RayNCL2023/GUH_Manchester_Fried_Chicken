@@ -2,9 +2,19 @@
   "name": "mfc-swarm",
   "private": true,
   "type": "module",
-  "workspaces": ["shared", "engine", "ai", "server", "web", "voice"],
+  "workspaces": [
+    "shared",
+    "engine",
+    "ai",
+    "server",
+    "web",
+    "voice"
+  ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "bun run server/index.ts",
+    "dev:server": "BOTS=8 bun --watch run server/index.ts",
+    "test": "bun test engine server"
   },
   "devDependencies": {
     "typescript": "^5.6.0",
