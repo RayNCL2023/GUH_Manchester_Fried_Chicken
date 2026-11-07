@@ -1,18 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { serverUrl } from "@/lib/hive/server";
 import FireDemo from "./FireDemo";
+import PhonesDemo from "./PhonesDemo";
+import ResultsPanel from "./ResultsPanel";
 import SkyDemo from "./SkyDemo";
 import TopBar from "./TopBar";
 
-const TABS = [
+const BASE_TABS = [
 	{ id: "fire", label: "Firebreak", Scene: FireDemo },
 	{ id: "sky", label: "Flock show", Scene: SkyDemo },
 ];
+// With a live server, the real phone light show joins the tabs.
+const LIVE_TABS = [BASE_TABS[0], { id: "phones", label: "Phone light show", Scene: PhonesDemo }, BASE_TABS[1]];
 
 export default function () {
-	const [tab, setTab] = useState(TABS[0].id);
-	const { Scene } = TABS.find((t) => t.id === tab)!;
+	const [TABS, setTabs] = useState(BASE_TABS);
+	const [live, setLive] = useState(false);
+	useEffect(() => {
+		if (serverUrl()) {
+			setTabs(LIVE_TABS);
+			setLive(true);
+		}
+	}, []);
+	const [tab, setTab] = useState(BASE_TABS[0].id);
+	const { Scene } = TABS.find((t) => t.id === tab) ?? TABS[0];
 
 	return (
 		<div className="flex flex-col w-full min-h-screen px-[0rem] bg-ink text-white">
@@ -20,7 +33,7 @@ export default function () {
 				crumbs={["Live demo"]}
 				right={
 					<div className="flex flex-row items-center gap-[1.5rem]">
-						<p className="hidden lg:block text-[.875rem] text-mute">Real engine · simulated world</p>
+						<p className="hidden lg:block text-[.875rem] text-mute">{live ? "Real engine · live server" : "Real engine · simulated world"}</p>
 						<div className="flex flex-row border border-line">
 							{TABS.map((t) => (
 								<button
@@ -37,6 +50,7 @@ export default function () {
 				}
 			/>
 			<Scene key={tab} />
+			<ResultsPanel />
 		</div>
 	);
 }

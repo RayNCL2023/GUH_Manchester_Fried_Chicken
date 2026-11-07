@@ -38,7 +38,9 @@
       "version": "0.0.1",
       "dependencies": {
         "@cloudflare/vite-plugin": "^1.54.8",
+        "@mfc/ai": "workspace:*",
         "@mfc/engine": "workspace:*",
+        "@mfc/voice": "workspace:*",
         "@neondatabase/serverless": "^1.1.0",
         "@paralleldrive/cuid2": "^3.3.0",
         "@tailwindcss/postcss": "^4.3.3",

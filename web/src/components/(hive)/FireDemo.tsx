@@ -1,7 +1,11 @@
 "use client";
 
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import FireLive from "@/lib/hive/fireLive";
+import ServerFireLive from "@/lib/hive/serverFireLive";
+import { httpBase, serverUrl } from "@/lib/hive/server";
+import type { WorldView } from "../../../../shared/types";
+import VoiceBar from "./VoiceBar";
 import useLive from "@/lib/hive/useLive";
 import { C, MODE_COLOR, agentState } from "@/lib/hive/pixel";
 import ButtonBase from "@/components/(buttons)/ButtonBase";
@@ -18,10 +22,21 @@ const LEGEND = [
 ];
 
 export default function () {
-	const { snap, act } = useLive(() => new FireLive());
+	const { snap, act } = useLive(() => {
+		const url = serverUrl();
+		return url ? new ServerFireLive(url) : new FireLive();
+	});
+	const [http, setHttp] = useState<string | null>(null);
+	useEffect(() => {
+		const url = serverUrl();
+		setHttp(url ? httpBase(url) : null);
+	}, []);
+	const viewRef = useRef<WorldView | null>(null);
 	if (!snap) {
 		return null;
 	}
+	viewRef.current = snap.view;
+	const source = "source" in snap ? snap.source : "sim";
 
 	const { view } = snap;
 	const selected = view.inspected?.id ?? null;
@@ -47,6 +62,13 @@ export default function () {
 				<span className="text-white tabular-nums">{view.metrics.msgLossPct}%</span>
 			</label>
 			<p className="text-[.875rem] text-mute xl:ml-auto">Drag to jam · click a drone for its view · shift-click to kill</p>
+			<div className="w-full pt-[.5rem]">
+				<VoiceBar
+					getView={() => viewRef.current}
+					http={source === "server" ? http : null}
+					injectGoal={(body) => act((w) => w.control({ type: "goal", body }))}
+				/>
+			</div>
 		</>
 	);
 
@@ -71,6 +93,9 @@ export default function () {
 		<DemoLayout
 			title={
 				<span className="flex flex-row flex-wrap gap-x-[1.5rem] gap-y-[.5rem]">
+					<span className={source === "server" ? "text-flock" : "text-mute"}>
+						{source === "server" ? "● Live · drones are separate devices" : "○ Offline sim · all drones in this tab"}
+					</span>
 					{selected ? `What ${selected} believes · unknown cells dimmed` : "Firebreak · Saddleworth Moor"}
 					{LEGEND.map((l) => (
 						<span key={l.label} className="flex flex-row items-center gap-[.4rem]">

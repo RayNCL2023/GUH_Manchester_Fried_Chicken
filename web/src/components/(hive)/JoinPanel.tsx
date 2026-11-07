@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import QRCode from "react-qr-code";
 import { C } from "@/lib/hive/pixel";
+import { serverQuery } from "@/lib/hive/server";
 
 export default function () {
 	const [url, setUrl] = useState("");
-	useEffect(() => setUrl(`${window.location.origin}/join`), []);
+	useEffect(() => setUrl(`${window.location.origin}/join${serverQuery()}`), []);
 
 	return (
 		<section className="flex flex-row items-center gap-[1.25rem] p-[1.25rem] border-b border-line">

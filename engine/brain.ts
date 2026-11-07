@@ -16,6 +16,7 @@ import type {
 } from "../shared/types";
 import { ChatterPlanner } from "./chatter";
 import { LocalMap } from "./map";
+import { WindModel } from "./windModel";
 import { claimBeats, dist, hashString, LruSet, makeMsgId, mulberry32, originOf, type Rng } from "./util";
 
 export interface PolicyWeights {
@@ -27,9 +28,12 @@ export interface PolicyWeights {
     crowd: number;
     /** Exponent on the goal boost. */
     goal: number;
+    /** Extra value for edges on the downwind side of the fire (learned wind). */
+    downwind: number;
 }
 
-export const DEFAULT_WEIGHTS: PolicyWeights = { dist: 1, value: 1, crowd: 0.6, goal: 1 };
+// downwind = 0: benchmarked (docs/RESULTS.md); weighting by learned wind didn't improve coverage.
+export const DEFAULT_WEIGHTS: PolicyWeights = { dist: 1, value: 1, crowd: 0.6, goal: 1, downwind: 0 };
 
 export interface HiveOptions {
     width?: number;
@@ -113,6 +117,8 @@ export class HiveBrain implements AgentBrain {
     private exploreSince = 0;
     private seenFire = false;
     private chatter = new ChatterPlanner();
+    readonly wind = new WindModel();
+    private centroidCache: { tick: number; c: Vec | null } = { tick: -1, c: null };
 
     constructor(opts: HiveOptions = {}) {
         this.map = new LocalMap(opts.width ?? 60, opts.height ?? 40);
@@ -174,10 +180,23 @@ export class HiveBrain implements AgentBrain {
 
     private senseCells(sense: Sense): void {
         for (const c of sense.nearbyCells) {
+            const prev = this.map.get(c.x, c.y);
             const changed = this.map.observe(c.x, c.y, c.state, this.tick, this.id);
+            if (changed && c.state === "fire" && (prev === "clear" || prev === "village")) {
+                this.learnSpread(c.x, c.y);
+            }
             if (changed && c.state === "fire" && !this.seenFire) {
                 this.seenFire = true;
                 this.chatter.propose("fire_spotted", this.tick);
+            }
+        }
+    }
+
+    /** We watched (x, y) ignite: the wind pushed fire here from burning neighbours we already knew. */
+    private learnSpread(x: number, y: number): void {
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            if (this.map.get(x + dx, y + dy) === "fire") {
+                this.wind.observeSpread({ x: x + dx, y: y + dy }, { x, y });
             }
         }
     }
@@ -310,6 +329,7 @@ export class HiveBrain implements AgentBrain {
             return;
         }
         this.peerPos.set(origin, body.pos);
+        this.wind.blend(body.windEstimate);
         for (const [taskId, rec] of this.claims) {
             if (rec.claimant !== origin) {
                 continue;
@@ -459,6 +479,11 @@ export class HiveBrain implements AgentBrain {
             // Patrol: edges we haven't looked at recently are worth more (stale info = likely missed spread).
             const ts = this.map.ts[task.pos.y * this.map.w + task.pos.x] ?? this.tick;
             value *= 1 + Math.min((this.tick - ts) / 40, 1.5);
+            // Watch where the fire is going: downwind edges (by our learned wind) matter more.
+            const c = this.cachedCentroid();
+            if (c && w.downwind > 0) {
+                value *= 1 + w.downwind * this.wind.downwindness(c, task.pos);
+            }
         }
         const boost = this.goalBoost(task.pos);
         return ((1 + w.dist * d) / Math.pow(value, w.value)) * (1 + w.crowd * crowd) / Math.pow(boost, w.goal);
@@ -551,6 +576,13 @@ export class HiveBrain implements AgentBrain {
         return dy > 0 ? "claim_south" : "claim_north";
     }
 
+    private cachedCentroid(): Vec | null {
+        if (this.centroidCache.tick !== this.tick) {
+            this.centroidCache = { tick: this.tick, c: this.fireCentroid() };
+        }
+        return this.centroidCache.c;
+    }
+
     private fireCentroid(): Vec | null {
         let sx = 0;
         let sy = 0;
@@ -577,7 +609,7 @@ export class HiveBrain implements AgentBrain {
     private periodicGossip(): void {
         const t = this.tick + (hashString(this.id) % 3); // stagger agents
         if (t % HEARTBEAT_EVERY === 0) {
-            const hb: HeartbeatBody = { pos: this.pos, claim: this.claim };
+            const hb: HeartbeatBody = { pos: this.pos, claim: this.claim, windEstimate: { ...this.wind.est } };
             this.emit("heartbeat", hb, RELAY_TTL);
         }
         if (this.myClaim && t % CLAIM_REFRESH_EVERY === 0) {
@@ -740,7 +772,7 @@ export class HiveBrain implements AgentBrain {
             moveTo: this.moveTarget(),
             send: this.outbox,
             claimed: this.claim,
-            status: { mode: this.mode, knownPct: this.map.knownPct() },
+            status: { mode: this.mode, knownPct: this.map.knownPct(), windEstimate: { ...this.wind.est } },
         };
         if (this.scenario === "lights") {
             const onSlot = this.myClaim && dist(this.pos, this.myClaim.task.pos) <= 1.5;

@@ -1,5 +1,5 @@
 // Headless in-process world for testing/tuning/training brains. Mirrors the server's rules:
-// sensor radius 3, radio range 8, jam zones block, global loss %, 1 cell/tick movement, msgs arrive next tick.
+// sensor radius from cfg (default 3; the server, web and benchmarks use 5), radio range 8, jam zones block, global loss %, 1 cell/tick movement, msgs arrive next tick.
 import type { Action, AgentBrain, AgentId, CellObs, CellState, GoalBody, Msg, Sense, Task, Vec } from "../../shared/types";
 import { initFireMap, isEdge, stepFire } from "../fire";
 import { dist, mulberry32, type Rng } from "../util";

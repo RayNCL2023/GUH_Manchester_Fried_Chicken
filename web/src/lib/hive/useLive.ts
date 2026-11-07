@@ -34,5 +34,5 @@ export default function useLive<W extends Live<unknown>>(make: () => W) {
 		setSnap(w.snapshot() as S);
 	}, []);
 
-	return { snap, act };
+	return { snap, act, world };
 }

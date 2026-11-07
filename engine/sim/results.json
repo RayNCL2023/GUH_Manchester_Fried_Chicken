@@ -1,0 +1,75 @@
+{
+  "generatedAt": "2026-11-07T14:42:48.412Z",
+  "ticks": 600,
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "rows": [
+    {
+      "scenario": "0% loss",
+      "results": {
+        "hive": 89.17094579514605,
+        "central": 90.01052964266184
+      },
+      "windCos": 0.7156442456209914
+    },
+    {
+      "scenario": "30% loss",
+      "results": {
+        "hive": 88.08328005097047,
+        "central": 88.01049137377748
+      },
+      "windCos": 0.7765282201750514
+    },
+    {
+      "scenario": "50% loss",
+      "results": {
+        "hive": 89.31958332247537,
+        "central": 85.8269958601856
+      },
+      "windCos": 0.7700405087448116
+    },
+    {
+      "scenario": "70% loss",
+      "results": {
+        "hive": 84.97285347762515,
+        "central": 77.97931282783898
+      },
+      "windCos": 0.7474709722382534
+    },
+    {
+      "scenario": "90% loss",
+      "results": {
+        "hive": 82.10456516547815,
+        "central": 45.053976758820546
+      },
+      "windCos": 0.6860188706199012
+    },
+    {
+      "scenario": "100% loss (total blackout)",
+      "results": {
+        "hive": 66.91348912269267,
+        "central": 0
+      },
+      "windCos": 0.6877245100780215
+    },
+    {
+      "scenario": "Jam between base and fire @20s",
+      "results": {
+        "hive": 88.08328005097047,
+        "central": 75.97185721713974
+      },
+      "windCos": 0.7765282201750514
+    },
+    {
+      "scenario": "Lose half the drones @20s",
+      "results": {
+        "hive": 68.63965583379706,
+        "central": 58.52103763788196
+      },
+      "windCos": 0.8223059225720496
+    }
+  ]
+}

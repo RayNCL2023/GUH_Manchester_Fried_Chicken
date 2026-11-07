@@ -5,24 +5,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import type { GoalBody, Vec } from "../shared/types";
+import type { Vec } from "../shared/types";
 
 export const MODEL = "claude-opus-5-5";
 const TIMEOUT_MS = 4000;
 
-/** What the LLM (and the keyword fallback) knows about the world. */
-export interface WorldBrief {
-    width: number;
-    height: number;
-    village: Vec | null;
-    fireCentre: Vec | null;
-    /** Plain-text summary (grid conventions, counts, wind, agents). */
-    text: string;
-}
-
-export interface ParsedGoal extends GoalBody {
-    source: "llm" | "keywords";
-}
+import { keywordGoal, type ParsedGoal, type WorldBrief } from "./keywords";
+export { keywordGoal, type ParsedGoal, type WorldBrief };
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic | null {
@@ -80,31 +69,6 @@ export async function parseGoal(transcript: string, world: WorldBrief): Promise<
         console.warn("[ai] parseGoal fell back to keywords:", err instanceof Error ? err.message : err);
         return keywordGoal(id, text, world);
     }
-}
-
-/** Deterministic parser: places by keyword, priority by urgency words. */
-export function keywordGoal(id: string, text: string, world: WorldBrief): ParsedGoal {
-    const t = text.toLowerCase();
-    const { width: w, height: h } = world;
-    const fire = world.fireCentre ?? { x: w / 2, y: h / 2 };
-    let target: Vec | undefined;
-    let radius = 8;
-    if (/village|town|homes|houses|people|civilian/.test(t) && world.village) {
-        target = world.village;
-    } else if (/north/.test(t)) {
-        target = { x: fire.x, y: Math.max(0, fire.y - 8) };
-    } else if (/south/.test(t)) {
-        target = { x: fire.x, y: Math.min(h - 1, fire.y + 8) };
-    } else if (/east/.test(t)) {
-        target = { x: Math.min(w - 1, fire.x + 8), y: fire.y };
-    } else if (/west/.test(t)) {
-        target = { x: Math.max(0, fire.x - 8), y: fire.y };
-    } else if (/fire|front|flame|edge/.test(t)) {
-        target = fire;
-        radius = 12;
-    }
-    const urgent = /now|urgent|immediately|everyone|all units|priority|asap/.test(t);
-    return { id, text: text || "Re-task", target, radius, priority: urgent ? 4 : 3, source: "keywords" };
 }
 
 const SITREP_SYSTEM = `You are the swarm's radio operator. Give a spoken situation report in exactly two short sentences

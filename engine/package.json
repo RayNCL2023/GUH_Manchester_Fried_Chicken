@@ -7,7 +7,8 @@
     ".": "./index.ts",
     "./runtime": "./runtime/index.ts",
     "./sim": "./sim/world.ts",
-    "./chatterLines": "./chatterLines.ts"
+    "./chatterLines": "./chatterLines.ts",
+    "./results": "./sim/results.json"
   },
   "scripts": {
     "test": "bun test",
