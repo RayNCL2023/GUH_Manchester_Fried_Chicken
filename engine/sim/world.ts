@@ -66,6 +66,8 @@ export class SimWorld {
     messagesSent = 0;
     messagesDelivered = 0;
     private ctlSeq = 0;
+    /** Hook: called for every message an agent sends (used to record chatter). */
+    onSend?: (from: AgentId, m: Omit<Msg, "from">) => void;
 
     constructor(cfg: Partial<SimConfig> & Pick<SimConfig, "makeBrain">) {
         this.cfg = { ...DEFAULT_SIM, ...cfg };
@@ -245,6 +247,7 @@ export class SimWorld {
     private route(a: SimAgent, act: Action): void {
         for (const m of act.send ?? []) {
             this.messagesSent++;
+            this.onSend?.(a.id, m);
             for (const b of this.agents) {
                 if (!this.linked(a, b)) {
                     continue;

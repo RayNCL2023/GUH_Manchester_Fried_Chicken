@@ -220,3 +220,36 @@ describe("sim", () => {
         expect(m.edgeMappedPct).toBeGreaterThan(30);
     });
 });
+
+describe("chatter (what the audience hears)", () => {
+    const { recordChatter } = require("../sim/chatterReport") as typeof import("../sim/chatterReport");
+
+    test("stays under 40 lines per minute, calm and under jamming", () => {
+        for (const jam of [false, true]) {
+            for (const seed of [2, 5]) {
+                const lines = recordChatter({ jam, seed });
+                expect(lines.length).toBeLessThanOrEqual(40);
+                expect(lines.every((l) => l.key !== "?")).toBe(true);
+            }
+        }
+    });
+
+    test("a spoken goal is audibly copied by more than one drone, but not all", () => {
+        const lines = recordChatter({ jam: false, seed: 2 });
+        const copies = lines.filter((l) => l.key === "goal_copy" && l.t >= 350 && l.t < 460).length;
+        expect(copies).toBeGreaterThanOrEqual(2);
+        expect(copies).toBeLessThan(8);
+    });
+
+    test("light show is silent except critical lines", () => {
+        const b = new HiveBrain();
+        b.init("Echo-40", "lights");
+        const slot = { id: "slot:0:0", pos: { x: 10, y: 10 }, kind: "slot" as const, value: 1, color: "#fff" };
+        let spoken = 0;
+        for (let t = 1; t <= 100; t++) {
+            const a = b.step(sense({ tick: t, scenario: "lights", tasks: [slot] }));
+            spoken += a.send?.filter((m) => m.kind === "chatter").length ?? 0;
+        }
+        expect(spoken).toBe(0);
+    });
+});

@@ -47,18 +47,18 @@ After killing 4 of 8 agents at tick 200, coverage is still 69% at tick 600. **As
 
 The risk is 8 to 30 radio voices, static and squelch all at once: a wall of noise that annoys judges and hides the story. The fix sits at two layers.
 
-### Layer 1: engine decides *who may speak* (decentralised floor control)
+### Layer 1: engine decides *who may speak* (decentralised floor control, `engine/chatter.ts`)
 
-Speaking works like real radio etiquette, handled by each agent with no coordinator:
-- **Listen before talk (carrier sense).** An agent only speaks if it hasn't heard chatter from a neighbour recently. The quiet window depends on priority: 5 ticks for critical lines, 15 for important, 30 for routine.
-- **Personal cooldown.** At most one line per 4 s per agent (2 s for critical lines).
-- **Random backoff.** A random delay before speaking, so two agents don't start in the same tick.
-- **Stale drop.** A line not spoken within 2 s is dropped, never queued.
-- **Event-driven only.** There's no idle chatter. Lines are tied to things the audience should notice: lost comms, back in contact, relay up, a claim conflict, a goal copied, new fire spotted.
-- **Goal "copy" is self-limiting.** Each agent says "copy" only if its neighbourhood is quiet, so a few voices ripple outward across the map, not 8 at once.
-- **The light show is silent**, apart from critical lines; it's a visual moment.
+- **Fair-share airtime.** Each agent's cooldown is `airtime × (agents it has heard from in the last 60 s)`. The audience hears the whole swarm at once, but each agent only hears its radio neighbours, so listen-before-talk alone can't limit the room. This rule does, with no coordinator.
+- **Listen before talk.** Wait for neighbour silence first: 3 s for routine lines, 1.5 s for important, 0.5 s for critical.
+- **Don't repeat news.** Skip a line someone was just heard saying (e.g. 3 drones losing the same unit means one "Lost contact with Echo 5").
+- **Mode hysteresis.** "No signal" is said only after 3 s of real isolation, at most once per 30 s per drone. "Relay up" needs 3 s of bridging. "Back in contact" only after 5 s or more of isolation. Modes flicker at the edge of radio range, and the voices shouldn't.
+- **Random backoff and stale drop.** A line not spoken within 2 s is discarded, never queued.
+- **The light show is silent**, apart from critical lines.
 
-Net effect: about one line every 1.5–3 s across the whole swarm, and every line means something.
+**Measured** (`bun run engine/sim/chatterReport.ts`, 60 s, 8 drones, 50% loss): 24–35 lines a minute, an average gap of about 2 s. A spoken goal gets 2–4 "copy" replies spreading outward. This is locked in by tests: at most 40 lines a minute, and goal copies from more than one drone but not all.
+
+**What the engine can't do:** when several drones are jammed at once, they can't hear each other, so their "Lost comms" lines land within about 1 s of each other (roughly 18 gaps under 1.5 s a minute). **The player must play one voice at a time and drop stale lines.** That's a requirement, not polish.
 
 ### Layer 2: voice player decides *how it sounds* (Role 4, `voice/radio.ts`)
 

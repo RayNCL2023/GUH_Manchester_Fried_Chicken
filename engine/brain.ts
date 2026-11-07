@@ -100,6 +100,11 @@ export class HiveBrain implements AgentBrain {
     private lostAnnounced = new Map<AgentId, number>();
     private lastNeighbourTick = 0;
     private mode: AgentMode = "normal";
+    private modeSince = 0;
+    private announced = true;
+    private isolatedFor = 0;
+    private lastRelayAnnounce = -1e9;
+    private lastIsolatedAnnounce = -1e9;
     private relayLog: number[] = [];
     private originLog: number[] = [];
     private goals = new Map<string, GoalRec>();
@@ -156,6 +161,7 @@ export class HiveBrain implements AgentBrain {
         this.periodicGossip();
         this.updateMode();
 
+        this.chatter.swarmSize = 1 + [...this.lastHeard.values()].filter((t) => this.tick - t < 600).length;
         const line = this.chatter.step(this.tick, this.rng);
         if (line) {
             this.emit("chatter", { line }, 0);
@@ -196,11 +202,11 @@ export class HiveBrain implements AgentBrain {
                 continue;
             }
             this.neighbourSince.delete(n);
-            if (heard - since < 15) {
+            if (heard - since < 30) {
                 continue;
             }
             const last = this.lostAnnounced.get(n) ?? -1e9;
-            if (this.tick - last < 200) {
+            if (this.tick - last < 300) {
                 continue;
             }
             this.lostAnnounced.set(n, this.tick);
@@ -238,7 +244,7 @@ export class HiveBrain implements AgentBrain {
                     this.onGoal(msg);
                     break;
                 case "chatter":
-                    this.chatter.heard(this.tick);
+                    this.chatter.heard(this.tick, (msg.body as { line?: string } | null)?.line);
                     break;
             }
             if (msg.kind === "goal" || msg.ttl <= 0) {
@@ -604,19 +610,34 @@ export class HiveBrain implements AgentBrain {
         } else if (this.isBridge()) {
             next = "relay";
         }
-        this.mode = next;
-        if (prev === next) {
+        if (prev !== next) {
+            if (prev === "isolated") {
+                this.isolatedFor = this.tick - this.modeSince;
+            }
+            this.mode = next;
+            this.modeSince = this.tick;
+            this.announced = false;
+        }
+        // Announce a mode only once it has held for a while (modes flicker at range edges).
+        if (this.announced) {
             return;
         }
-        if (next === "isolated") {
+        const held = this.tick - this.modeSince;
+        if (next === "isolated" && held >= 30 && this.tick - this.lastIsolatedAnnounce > 300) {
+            this.lastIsolatedAnnounce = this.tick;
+            this.announced = true;
             this.chatter.propose("isolated", this.tick);
             return;
         }
-        if (prev === "isolated") {
+        if (next !== "isolated" && prev !== next && this.isolatedFor >= 50) {
+            this.isolatedFor = 0;
+            this.announced = true;
             this.chatter.propose("reconnected", this.tick);
             return;
         }
-        if (next === "relay") {
+        if (next === "relay" && held >= 30 && this.tick - this.lastRelayAnnounce > 300) {
+            this.announced = true;
+            this.lastRelayAnnounce = this.tick;
             this.chatter.propose("relay_up", this.tick);
         }
     }
