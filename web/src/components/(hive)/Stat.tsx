@@ -12,7 +12,7 @@ export default function ({
 	className?: string;
 }) {
 	return (
-		<div className={twMerge("flex flex-col gap-[.5rem] p-[1.25rem] border-line", className)}>
+		<div className={twMerge("flex flex-col gap-[.5rem] p-[1.25rem] rounded-[1.25rem] bg-panel border border-line", className)}>
 			<p className="text-[.875rem] text-mute">{label}</p>
 			<p className="font-display text-[1.75rem] leading-none tracking-tight text-white tabular-nums">
 				{value}

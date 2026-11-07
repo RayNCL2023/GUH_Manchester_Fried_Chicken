@@ -13,29 +13,44 @@ export const font = (weight: number, px: number) => {
 export const lerpPos = (from: Vec | undefined, to: Vec, t: number): Vec =>
 	from ? { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t } : to;
 
-// Dithered jam zone: grey rim plus a sparse hatch inside.
-export function drawJam(ctx: CanvasRenderingContext2D, center: Vec, radius: number, cell: number) {
-	const x0 = Math.floor(center.x - radius - 1);
-	const y0 = Math.floor(center.y - radius - 1);
+// One rounded "pixel": a soft dot with a gap around it.
+export function dot(ctx: CanvasRenderingContext2D, x: number, y: number, cell: number, color: string) {
+	const g = Math.max(1, cell * 0.12);
+	ctx.fillStyle = color;
+	ctx.beginPath();
+	ctx.roundRect(x * cell + g / 2, y * cell + g / 2, cell - g, cell - g, (cell - g) * 0.38);
+	ctx.fill();
+}
 
-	for (let y = y0; y <= center.y + radius + 1; y++) {
-		for (let x = x0; x <= center.x + radius + 1; x++) {
-			const d = Math.hypot(x + 0.5 - center.x, y + 0.5 - center.y);
-			if (d > radius + 0.5) {
-				continue;
-			}
-			const rim = Math.abs(d - radius) < 0.55;
-			if (!rim && (x + y) % 3 !== 0) {
-				continue;
-			}
-			ctx.fillStyle = rim ? "rgba(139,139,148,.75)" : "rgba(139,139,148,.22)";
-			ctx.fillRect(x * cell, y * cell, cell - 1, cell - 1);
-		}
-	}
+// Jam zone: soft grey disc with a dotted rim.
+export function drawJam(ctx: CanvasRenderingContext2D, center: Vec, radius: number, cell: number) {
+	const cx = center.x * cell;
+	const cy = center.y * cell;
+	const r = radius * cell;
+
+	ctx.fillStyle = "rgba(139,139,148,.14)";
+	ctx.beginPath();
+	ctx.arc(cx, cy, r, 0, Math.PI * 2);
+	ctx.fill();
+
+	ctx.strokeStyle = "rgba(139,139,148,.8)";
+	ctx.lineWidth = 3;
+	ctx.lineCap = "round";
+	ctx.setLineDash([0.1, 9]);
+	ctx.beginPath();
+	ctx.arc(cx, cy, r, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.setLineDash([]);
 
 	ctx.font = font(500, 14);
+	const label = "Jam zone";
+	const tw = ctx.measureText(label).width;
+	ctx.fillStyle = "rgba(15,15,17,.85)";
+	ctx.beginPath();
+	ctx.roundRect(cx - tw / 2 - 8, cy - r - 26, tw + 16, 20, 10);
+	ctx.fill();
 	ctx.fillStyle = "#8b8b94";
-	ctx.fillText("Jam zone", (center.x - radius) * cell, (center.y - radius) * cell - 8);
+	ctx.fillText(label, cx - tw / 2, cy - r - 11);
 }
 
 // requestAnimationFrame loop bound to a canvas.
@@ -67,12 +82,14 @@ export function usePointerJam({
 	hitTest,
 	onHit,
 	onEmptyClick,
+	onEmptyDown,
 	onJam,
 }: {
 	size: { w: number; h: number };
 	hitTest: (p: Vec) => string | undefined;
 	onHit: (id: string, shift: boolean) => void;
 	onEmptyClick?: () => void;
+	onEmptyDown?: (p: Vec) => boolean;
 	onJam?: (center: Vec, radius: number) => void;
 }) {
 	const drag = useRef<{ start: Vec; now: Vec } | null>(null);
@@ -88,6 +105,9 @@ export function usePointerJam({
 			const id = hitTest(p);
 			if (id) {
 				onHit(id, e.shiftKey);
+				return;
+			}
+			if (onEmptyDown?.(p)) {
 				return;
 			}
 			drag.current = { start: p, now: p };

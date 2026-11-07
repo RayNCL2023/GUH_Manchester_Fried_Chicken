@@ -12,8 +12,8 @@ export default function () {
 	}, []);
 
 	return (
-		<section className="flex flex-row items-center gap-[1.25rem] p-[1.25rem] border-b border-line">
-			<div className="p-[.5rem] bg-white shrink-0">
+		<section className="flex flex-row items-center gap-[1.25rem] p-[1.25rem] rounded-[1.25rem] bg-panel border border-line">
+			<div className="p-[.6rem] bg-white rounded-[.9rem] shrink-0">
 				{join && <QRCode value={join.url} size={104} bgColor="#ffffff" fgColor={C.ink} />}
 			</div>
 			<div className="flex flex-col gap-[.4rem] min-w-0">

@@ -27,23 +27,23 @@ export default function ({
 	stats: StatItem[];
 }) {
 	return (
-		<>
-			<div className="grid grid-cols-1 xl:grid-cols-[1fr_25rem] border-b border-line">
-				<PanelBase index="01" title={title} className="xl:border-r">
+		<div className="flex flex-col gap-[.75rem] p-[.75rem]">
+			<div className="grid grid-cols-1 xl:grid-cols-[1fr_25rem] gap-[.75rem]">
+				<PanelBase index="01" title={title}>
 					{canvas}
 					<div className="flex flex-row flex-wrap items-center gap-[.5rem]">{controls}</div>
 				</PanelBase>
 
-				<div className="flex flex-col">
+				<div className="flex flex-col gap-[.75rem]">
 					<JoinPanel />
-					<PanelBase index="02" title={headline.label} className="border-b">
+					<PanelBase index="02" title={headline.label}>
 						<p className="font-display text-[4rem] leading-none tracking-[-0.04em] tabular-nums text-white">
 							{headline.value}
 							<span className="text-mute text-[1.75rem] ml-[.25rem]">%</span>
 						</p>
 						<Sparkline values={history} className="h-[4.5rem]" />
 					</PanelBase>
-					<PanelBase index="03" title={sideTitle} className="border-b">
+					<PanelBase index="03" title={sideTitle}>
 						{side}
 					</PanelBase>
 					<PanelBase index="04" title="Radio" className="flex-1">
@@ -61,11 +61,11 @@ export default function ({
 				</div>
 			</div>
 
-			<div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-8">
+			<div className="grid grid-cols-2 md:grid-cols-4 2xl:grid-cols-8 gap-[.75rem]">
 				{stats.map((s) => (
-					<Stat key={s.label} {...s} className="border-r border-b" />
+					<Stat key={s.label} {...s} />
 				))}
 			</div>
-		</>
+		</div>
 	);
 }

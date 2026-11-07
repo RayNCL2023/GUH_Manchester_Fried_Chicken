@@ -14,12 +14,13 @@ export default function ({
 		<div
 			aria-hidden
 			className={twMerge("grid shrink-0", className)}
-			style={{ gridTemplateColumns: `repeat(${art[0].length}, ${size})`, gridAutoRows: size }}
+			style={{ gridTemplateColumns: `repeat(${art[0].length}, ${size})`, gridAutoRows: size, gap: `calc(${size} * .15)` }}
 		>
 			{art.flatMap((row, y) =>
 				[...row].map((ch, x) => (
 					<span
 						key={`${x}-${y}`}
+						className="rounded-[35%]"
 						style={{ background: ch === "." ? "transparent" : ART_COLORS[ch] }}
 					/>
 				)),

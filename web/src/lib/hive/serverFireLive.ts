@@ -5,6 +5,7 @@
 // sim instead, so the demo survives a dead venue wifi.
 import type { Control, Vec, WorldView } from "../../../../shared/types";
 import FireLive, { type FireSnap } from "./fireLive";
+import { T, type LoadedArea } from "./osm";
 import { bearing } from "./pixel";
 import { ViewerSocket } from "./server";
 import type { Chatter, Live } from "./types";
@@ -21,7 +22,11 @@ export default class ServerFireLive implements Live<SourcedSnap> {
     private lossSetting = 0;
     private readonly startedAt = performance.now();
 
-    constructor(url: string, private readonly scenario: "fire" | "lights" = "fire") {
+    constructor(
+        url: string,
+        private readonly area: LoadedArea,
+        private readonly scenario: "fire" | "lights" = "fire",
+    ) {
         this.socket = new ViewerSocket(url);
         this.socket.control({ type: "switchScenario", scenario });
         setTimeout(() => this.ensureScenario(), 600);
@@ -46,7 +51,7 @@ export default class ServerFireLive implements Live<SourcedSnap> {
             this.ensureScenarioOnce();
             return;
         }
-        this.local ??= new FireLive();
+        this.local ??= new FireLive(this.area);
         this.local.step();
     }
 
@@ -102,9 +107,16 @@ export default class ServerFireLive implements Live<SourcedSnap> {
         return n ? { x: x / n, y: y / n } : null;
     }
 
-    protectVillage() {
+    /** Fires can only be started in the offline sim; the server has its own ignition. */
+    ignite(at: Vec) {
         if (!this.useServer) {
-            this.local?.protectVillage();
+            this.local?.ignite(at);
+        }
+    }
+
+    protectBuildings() {
+        if (!this.useServer) {
+            this.local?.protectBuildings();
             return;
         }
         const target = this.villageCentre() ?? undefined;
@@ -120,7 +132,7 @@ export default class ServerFireLive implements Live<SourcedSnap> {
 
     snapshot(): SourcedSnap {
         if (!this.useServer || !this.socket.view) {
-            this.local ??= new FireLive();
+            this.local ??= new FireLive(this.area);
             return { ...this.local.snapshot(), source: "sim" };
         }
         const v: WorldView = this.socket.view;
@@ -139,8 +151,11 @@ export default class ServerFireLive implements Live<SourcedSnap> {
         const isolated = alive.filter((a) => a.mode === "isolated").length;
         const chatter: Chatter[] = v.recentChatter.slice(-8).reverse();
         const burning = v.cells.filter((c) => c === "fire").length;
+        // The server map has no OSM terrain: show its village cells as buildings on open ground.
+        const terrain = Uint8Array.from(v.cells, (c) => (c === "village" ? T.building : T.ground));
         return {
             source: "server",
+            terrain,
             view: {
                 ...v,
                 metrics: { ...v.metrics, msgLossPct: this.lossSetting },

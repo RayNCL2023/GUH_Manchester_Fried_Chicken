@@ -34,13 +34,13 @@ export default function () {
 				right={
 					<div className="flex flex-row items-center gap-[1.5rem]">
 						<p className="hidden lg:block text-[.875rem] text-mute">{live ? "Real engine · live server" : "Real engine · simulated world"}</p>
-						<div className="flex flex-row border border-line">
+						<div className="flex flex-row gap-[.25rem] p-[.25rem] rounded-full border border-line bg-ink">
 							{TABS.map((t) => (
 								<button
 									key={t.id}
 									onClick={() => setTab(t.id)}
 									data-on={t.id === tab}
-									className="min-h-[2.75rem] px-[1.25rem] text-[.875rem] bg-transparent text-mute data-[on=true]:bg-panel data-[on=true]:text-white"
+									className="min-h-[2.25rem] px-[1.25rem] rounded-full text-[.875rem] bg-transparent text-mute data-[on=true]:bg-white data-[on=true]:text-ink"
 								>
 									{t.label}
 								</button>
