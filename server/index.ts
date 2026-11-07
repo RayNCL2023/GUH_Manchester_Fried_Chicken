@@ -1,7 +1,7 @@
 // Hive world server: one Bun process. HTTP API + WebSocket (/ws) for agents and viewers.
 //   bun run server/index.ts            (PORT, BOTS, CORS_ORIGIN, ANTHROPIC_API_KEY, ELEVENLABS_API_KEY)
 import type { ServerWebSocket } from "bun";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, normalize } from "node:path";
 import type { AgentToServer, ClientHello, Control, ViewerToServer } from "../shared/types";
 import { parseGoal, sitrep } from "../ai";
@@ -64,14 +64,15 @@ function serveStatic(pathname: string): Response {
         return new Response("Not found", { status: 404 });
     }
     for (const candidate of [safe, join(safe, "index.html"), `${safe}.html`, join(STATIC_DIR, "index.html")]) {
-        if (existsSync(candidate) && !candidate.endsWith("dist")) {
-            const file = Bun.file(candidate);
-            if (file.size > 0) {
-                return new Response(file);
+        try {
+            if (statSync(candidate).isFile()) {
+                return new Response(Bun.file(candidate));
             }
+        } catch {
+            // not there, try the next candidate
         }
     }
-    return new Response("Not found", { status: 404 });
+    return new Response("Hive server running. Open the web app with ?server=<this host>.", { status: 200, headers: cors });
 }
 
 // ---------- server ----------

@@ -18,7 +18,13 @@ if (!process.env.ELEVENLABS_API_KEY) {
     process.exit(1);
 }
 
-const hasFfmpeg = Bun.spawnSync(["ffmpeg", "-version"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+const hasFfmpeg = (() => {
+    try {
+        return Bun.spawnSync(["ffmpeg", "-version"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+    } catch {
+        return false; // not installed (Windows throws ENOENT)
+    }
+})();
 
 async function normalise(path: string): Promise<void> {
     if (!hasFfmpeg) {
@@ -29,7 +35,7 @@ async function normalise(path: string): Promise<void> {
     if (p.exitCode === 0) {
         await Bun.write(path, Bun.file(tmp));
     }
-    Bun.spawnSync(["rm", "-f", tmp]);
+    await Bun.file(tmp).delete().catch(() => {});
 }
 
 let made = 0;

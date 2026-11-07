@@ -1,0 +1,175 @@
+{
+  "voices": [
+    "alpha",
+    "bravo",
+    "charlie",
+    "delta"
+  ],
+  "clips": [
+    {
+      "key": "claim_north",
+      "variant": 0,
+      "text": "Taking the north flank."
+    },
+    {
+      "key": "claim_north",
+      "variant": 1,
+      "text": "I've got the north side."
+    },
+    {
+      "key": "claim_south",
+      "variant": 0,
+      "text": "Taking the south flank."
+    },
+    {
+      "key": "claim_south",
+      "variant": 1,
+      "text": "I've got the south side."
+    },
+    {
+      "key": "claim_east",
+      "variant": 0,
+      "text": "Taking the east flank."
+    },
+    {
+      "key": "claim_east",
+      "variant": 1,
+      "text": "I've got the east side."
+    },
+    {
+      "key": "claim_west",
+      "variant": 0,
+      "text": "Taking the west flank."
+    },
+    {
+      "key": "claim_west",
+      "variant": 1,
+      "text": "I've got the west side."
+    },
+    {
+      "key": "protect",
+      "variant": 0,
+      "text": "Moving to cover the village."
+    },
+    {
+      "key": "protect",
+      "variant": 1,
+      "text": "Covering the village."
+    },
+    {
+      "key": "yield",
+      "variant": 0,
+      "text": "You take it, I'm re-tasking."
+    },
+    {
+      "key": "yield",
+      "variant": 1,
+      "text": "Yielding that one, moving on."
+    },
+    {
+      "key": "fire_spotted",
+      "variant": 0,
+      "text": "New fire front spotted."
+    },
+    {
+      "key": "fire_spotted",
+      "variant": 1,
+      "text": "Eyes on the fire line."
+    },
+    {
+      "key": "relay_up",
+      "variant": 0,
+      "text": "Relay up, passing traffic."
+    },
+    {
+      "key": "relay_up",
+      "variant": 1,
+      "text": "Relaying for the group."
+    },
+    {
+      "key": "reconnected",
+      "variant": 0,
+      "text": "Back in contact, syncing map."
+    },
+    {
+      "key": "reconnected",
+      "variant": 1,
+      "text": "Comms restored, catching up."
+    },
+    {
+      "key": "lost_unit",
+      "variant": 0,
+      "text": "Lost contact with a unit."
+    },
+    {
+      "key": "lost_echo_1",
+      "variant": 0,
+      "text": "Lost contact with Echo 1."
+    },
+    {
+      "key": "lost_echo_2",
+      "variant": 0,
+      "text": "Lost contact with Echo 2."
+    },
+    {
+      "key": "lost_echo_3",
+      "variant": 0,
+      "text": "Lost contact with Echo 3."
+    },
+    {
+      "key": "lost_echo_4",
+      "variant": 0,
+      "text": "Lost contact with Echo 4."
+    },
+    {
+      "key": "lost_echo_5",
+      "variant": 0,
+      "text": "Lost contact with Echo 5."
+    },
+    {
+      "key": "lost_echo_6",
+      "variant": 0,
+      "text": "Lost contact with Echo 6."
+    },
+    {
+      "key": "lost_echo_7",
+      "variant": 0,
+      "text": "Lost contact with Echo 7."
+    },
+    {
+      "key": "lost_echo_8",
+      "variant": 0,
+      "text": "Lost contact with Echo 8."
+    },
+    {
+      "key": "isolated",
+      "variant": 0,
+      "text": "Lost comms, continuing on last plan."
+    },
+    {
+      "key": "isolated",
+      "variant": 1,
+      "text": "No signal, working alone."
+    },
+    {
+      "key": "goal_copy",
+      "variant": 0,
+      "text": "Copy, re-tasking."
+    },
+    {
+      "key": "goal_copy",
+      "variant": 1,
+      "text": "Copy that, moving now."
+    },
+    {
+      "key": "goal_copy",
+      "variant": 2,
+      "text": "Roger, on it."
+    },
+    {
+      "key": "slot_locked",
+      "variant": 0,
+      "text": "Pixel locked."
+    }
+  ]
+}

@@ -7,10 +7,10 @@ export interface RadioVoice {
 }
 
 export const DEFAULT_VOICES: RadioVoice[] = [
-    { name: "alpha", voiceId: "pNInz6obpgDQGcFmaJgB" },
-    { name: "bravo", voiceId: "21m00Tcm4TlvDq8ikWAM" },
-    { name: "charlie", voiceId: "TxGEqnHWrfWFTfGW9XjX" },
-    { name: "delta", voiceId: "EXAVITQu4vr4xnJzZrkK" },
+    { name: "alpha", voiceId: "onwK4e9ZLuTAKqWW03F9" }, // Daniel: steady broadcaster (British)
+    { name: "bravo", voiceId: "Xb7hH8MSUJpSbSDYk0k2" }, // Alice: clear (British)
+    { name: "charlie", voiceId: "SAz9YHcvj6GT2YYXdXww" }, // River: relaxed, neutral
+    { name: "delta", voiceId: "nPczCjzI2devNBz1zQrb" }, // Brian: deep, comforting
 ];
 
 export function voicesFromEnv(env: string | undefined): RadioVoice[] {
