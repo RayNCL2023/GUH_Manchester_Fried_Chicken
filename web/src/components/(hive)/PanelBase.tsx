@@ -14,7 +14,7 @@ export default function ({
 }) {
 	return (
 		<section
-			className={twMerge("flex flex-col gap-[1rem] p-[1.25rem] border-line", className)}
+			className={twMerge("flex flex-col gap-[1rem] p-[1.25rem] rounded-[1.25rem] bg-panel border border-line", className)}
 			{...props}
 		>
 			{(index || title) && (

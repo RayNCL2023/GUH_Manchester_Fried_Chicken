@@ -1,18 +1,30 @@
-// Flock show: real HiveBrains in "lights" mode claim pixels of a picture in the sky.
-// The world only simulates flight and radio (range, loss, jamming). It never assigns slots.
+// Flock show: real HiveBrains in "lights" mode claim moving slots of a choreographed show.
+// The world only simulates flight and radio. It never assigns slots.
+//
+// - New shows leave a ground station and spread drone to drone over the radio (gossip).
+// - Jamming shrinks radio range rather than killing it: close neighbours can still whisper.
+// - Choreography is a function of (show, start tick, shared clock), so a drone that can't hear
+//   anyone keeps dancing its last show in sync instead of freezing.
 import { HiveBrain } from "@mfc/engine";
 import type { Action, AgentId, ChatterBody, Msg, Sense, Task, Vec } from "../../../../shared/types";
-import { ART_COLORS, PICTURES, fitArt } from "./pixel";
+import { SHOWS, type Layout } from "./shows";
 import type { Chatter, Live, StatItem } from "./types";
 
-export const SKY_W = 64;
-export const SKY_H = 36;
+export const SKY_W = 96;
+export const SKY_H = 54;
+export const STATION: Vec = { x: SKY_W / 2, y: 51 };
 const DRONES = 64;
-const RANGE = 9;
-const SPEED = 0.7;
-const GROUND = 33;
-const RESERVE_Y = 27;
+const RANGE = 14;
+const STATION_RANGE = 24; // ground station has a bigger mast than a drone
+const JAM_RANGE = 6; // jamming shrinks range, it does not kill it
+const SPEED = 1.4;
+const GROUND = 50;
+const RESERVE_Y = 43;
+const GOSSIP_EVERY = 3;
+const AUTOPLAY_TICKS = 180;
 const UNLIT = "#000000";
+
+type Mission = { seq: number; show: number; start: number };
 
 type Drone = {
 	id: AgentId;
@@ -23,16 +35,27 @@ type Drone = {
 	inbox: Msg[];
 	claim: string | null;
 	color: string;
-	mission: number; // the picture this drone last heard about
+	mission: Mission;
+	heardAt: number;
 };
 
 export type SkySnap = {
 	tick: number;
-	drones: { id: AgentId; pos: Vec; alive: boolean; jammed: boolean; color: string; onSlot: boolean }[];
+	drones: {
+		id: AgentId;
+		pos: Vec;
+		alive: boolean;
+		jammed: boolean;
+		color: string;
+		fresh: boolean; // just heard a new show
+		stale: boolean; // still dancing an older show
+	}[];
 	links: [Vec, Vec][];
 	jams: { center: Vec; radius: number }[];
 	targets: { pos: Vec; color: string }[];
-	mission: number;
+	show: number;
+	autoplay: boolean;
+	transmitting: boolean;
 	headline: number;
 	history: number[];
 	stats: StatItem[];
@@ -43,14 +66,16 @@ const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export default class SkyLive implements Live<SkySnap> {
 	tick = 0;
-	mission = 0;
 	lossPct = 20;
+	autoplay = true;
 	jams: { center: Vec; radius: number }[] = [];
+	private current: Mission = { seq: 0, show: 0, start: 0 };
 	private drones: Drone[] = [];
 	private links: [Drone, Drone][] = [];
 	private chatter: Chatter[] = [];
 	private history: number[] = [];
-	private slotCache = new Map<string, { tasks: Task[]; size: string }>();
+	private layouts = new Map<string, Layout>();
+	private tasksNow = new Map<number, Task[]>();
 	private formed = 0;
 	private rand = Math.random;
 
@@ -60,106 +85,130 @@ export default class SkyLive implements Live<SkySnap> {
 
 	reset() {
 		this.tick = 0;
-		this.mission = 0;
+		this.current = { seq: 0, show: 0, start: 0 };
 		this.jams = [];
 		this.chatter = [];
 		this.history = [];
+		this.layouts.clear();
 		this.drones = Array.from({ length: DRONES }, (_, i) => {
 			const id = `Echo-${i + 1}`;
 			const brain = new HiveBrain({ width: SKY_W, height: SKY_H, seed: this.seed, radioRange: RANGE });
 			brain.init(id, "lights");
 			return {
 				id,
-				pos: { x: 3 + (i % 16) * 3.8, y: 30 + Math.floor(i / 16) * 1.1 },
+				pos: { x: 4 + (i % 16) * 5.8, y: 45 + Math.floor(i / 16) * 1.6 },
 				alive: true,
 				jammed: false,
 				brain,
 				inbox: [],
 				claim: null,
 				color: UNLIT,
-				mission: 0,
+				mission: { ...this.current },
+				heardAt: 0,
 			};
 		});
 	}
 
-	// Picture pixels (value 2) plus hover slots for spare drones (value 0.5).
-	private slots(mission: number, alive: number) {
-		const key = `${mission}:${alive}`;
-		const cached = this.slotCache.get(key);
+	launch(show: number) {
+		this.current = { seq: this.current.seq + 1, show: show % SHOWS.length, start: this.tick };
+	}
+
+	// ---------- slots ----------
+
+	private layout(m: Mission, alive: number) {
+		const key = `${m.seq}:${alive}`;
+		let l = this.layouts.get(key);
+		if (!l) {
+			l = SHOWS[m.show].layout(alive);
+			this.layouts.set(key, l);
+		}
+		return l;
+	}
+
+	// Slot positions right now, from the drone's own copy of the show and the shared clock.
+	private tasksFor(m: Mission, alive: number): Task[] {
+		const cached = this.tasksNow.get(m.seq);
 		if (cached) {
 			return cached;
 		}
 
-		const art = fitArt(PICTURES[mission].art, alive);
-		const w = art[0].length;
-		const h = art.length;
-		const s = Math.min(3, 46 / w, 22 / h);
-		const tasks: Task[] = [];
+		const show = SHOWS[m.show];
+		const { slots, size } = this.layout(m, alive);
+		const t = (this.tick - m.start) / 10;
+		const tasks: Task[] = slots.map((s, i) => ({
+			id: `slot:${m.seq}:${size}:${i}`,
+			pos: show.move(s, t),
+			kind: "slot",
+			value: 2,
+			color: show.tint?.(s, i, t) ?? s.color,
+		}));
 
-		art.forEach((row, y) =>
-			[...row].forEach((ch, x) => {
-				if (ch === ".") {
-					return;
-				}
-				tasks.push({
-					id: `slot:${mission}.${w}x${h}:${x}:${y}`,
-					pos: { x: SKY_W / 2 + (x - (w - 1) / 2) * s, y: 13 + (y - (h - 1) / 2) * s },
-					kind: "slot",
-					value: 2,
-					color: ART_COLORS[ch],
-				});
-			}),
-		);
-
-		const spare = Math.max(0, alive - tasks.length) + 2;
+		const spare = Math.max(0, alive - slots.length) + 2;
 		for (let k = 0; k < spare; k++) {
 			tasks.push({
 				id: `slot:reserve:${k}`,
-				pos: { x: 3 + (k * (SKY_W - 6)) / Math.max(1, spare - 1), y: RESERVE_Y },
+				// Spares hover in a tight row above the station, in radio reach of each other.
+				pos: { x: SKY_W / 2 + (k - (spare - 1) / 2) * 3.5, y: RESERVE_Y },
 				kind: "slot",
 				value: 0.5,
 				color: UNLIT,
 			});
 		}
 
-		const out = { tasks, size: `${w}×${h}` };
-		this.slotCache.set(key, out);
-		return out;
+		this.tasksNow.set(m.seq, tasks);
+		return tasks;
 	}
+
+	// ---------- radio ----------
 
 	private inJam(p: Vec) {
 		return this.jams.some((j) => dist(p, j.center) <= j.radius);
 	}
 
+	private range(a: Drone, b: Drone) {
+		return a.jammed || b.jammed ? JAM_RANGE : RANGE;
+	}
+
+	private adopt(d: Drone, m: Mission) {
+		if (m.seq <= d.mission.seq) {
+			return;
+		}
+		d.mission = m;
+		d.heardAt = this.tick;
+	}
+
 	step() {
 		this.tick++;
-		const alive = this.drones.filter((d) => d.alive);
+		this.tasksNow.clear();
+		if (this.autoplay && this.tick - this.current.start > AUTOPLAY_TICKS) {
+			this.launch(this.current.show + 1);
+		}
 
+		const alive = this.drones.filter((d) => d.alive);
 		for (const d of this.drones) {
 			if (!d.alive) {
 				d.pos.y = Math.min(GROUND, d.pos.y + 0.6);
 				continue;
 			}
 			d.jammed = this.inJam(d.pos);
-			if (!d.jammed) {
-				d.mission = this.mission;
-			}
 		}
 
-		const neighbours = new Map<AgentId, AgentId[]>(alive.map((d) => [d.id, []]));
+		const neighbours = new Map<AgentId, Drone[]>(alive.map((d) => [d.id, []]));
 		this.links = [];
 		for (let i = 0; i < alive.length; i++) {
 			for (let k = i + 1; k < alive.length; k++) {
 				const a = alive[i];
 				const b = alive[k];
-				if (a.jammed || b.jammed || dist(a.pos, b.pos) > RANGE) {
+				if (dist(a.pos, b.pos) > this.range(a, b)) {
 					continue;
 				}
 				this.links.push([a, b]);
-				neighbours.get(a.id)!.push(b.id);
-				neighbours.get(b.id)!.push(a.id);
+				neighbours.get(a.id)!.push(b);
+				neighbours.get(b.id)!.push(a);
 			}
 		}
+
+		this.spreadMission(alive, neighbours);
 
 		const actions = new Map<AgentId, Action>();
 		for (const d of alive) {
@@ -168,9 +217,9 @@ export default class SkyLive implements Live<SkySnap> {
 				scenario: "lights",
 				self: { id: d.id, pos: { ...d.pos }, alive: true, jammed: d.jammed, isPhone: false },
 				nearbyCells: [],
-				neighbours: neighbours.get(d.id)!,
+				neighbours: neighbours.get(d.id)!.map((n) => n.id),
 				inbox: d.inbox,
-				tasks: this.slots(d.mission, alive.length).tasks,
+				tasks: this.tasksFor(d.mission, alive.length),
 				clockMs: this.tick * 100,
 			};
 			d.inbox = [];
@@ -194,7 +243,31 @@ export default class SkyLive implements Live<SkySnap> {
 		}
 	}
 
-	private route(d: Drone, act: Action, neighbours: AgentId[]) {
+	// The station reaches drones in range; everyone else hears the new show from a neighbour.
+	private spreadMission(alive: Drone[], neighbours: Map<AgentId, Drone[]>) {
+		for (const d of alive) {
+			if (!d.jammed && dist(d.pos, STATION) <= STATION_RANGE) {
+				this.adopt(d, this.current);
+			}
+		}
+		if (this.tick % GOSSIP_EVERY !== 0) {
+			return;
+		}
+
+		const heard: [Drone, Mission][] = [];
+		for (const d of alive) {
+			for (const n of neighbours.get(d.id)!) {
+				if (n.mission.seq > d.mission.seq && this.rand() * 100 >= this.lossPct) {
+					heard.push([d, n.mission]);
+				}
+			}
+		}
+		for (const [d, m] of heard) {
+			this.adopt(d, m);
+		}
+	}
+
+	private route(d: Drone, act: Action, neighbours: Drone[]) {
 		for (const m of act.send ?? []) {
 			if (m.kind === "chatter") {
 				this.chatter.push({ from: d.id, line: (m.body as ChatterBody).line, tick: this.tick });
@@ -202,11 +275,11 @@ export default class SkyLive implements Live<SkySnap> {
 					this.chatter.shift();
 				}
 			}
-			for (const id of neighbours) {
+			for (const n of neighbours) {
 				if (this.rand() * 100 < this.lossPct) {
 					continue;
 				}
-				this.drones.find((x) => x.id === id)!.inbox.push({ ...m, from: d.id });
+				n.inbox.push({ ...m, from: d.id });
 			}
 		}
 	}
@@ -221,19 +294,13 @@ export default class SkyLive implements Live<SkySnap> {
 		d.pos.y = Math.max(0, Math.min(SKY_H - 1, d.pos.y + (to.y - d.pos.y) * k));
 	}
 
-	private onSlot(d: Drone, tasks: Task[]) {
-		const t = tasks.find((x) => x.id === d.claim);
-		return !!t && dist(d.pos, t.pos) <= 1.5;
+	private formedPct(alive: Drone[]) {
+		const tasks = this.tasksFor(this.current, alive.length).filter((t) => t.color !== UNLIT);
+		const done = tasks.filter((t) => alive.some((d) => d.claim === t.id && dist(d.pos, t.pos) <= 2)).length;
+		return tasks.length ? Math.round((done / tasks.length) * 100) : 0;
 	}
 
-	private formedPct(alive: Drone[]) {
-		const { tasks } = this.slots(this.mission, alive.length);
-		const picture = tasks.filter((t) => t.color !== UNLIT);
-		const done = picture.filter((t) =>
-			alive.some((d) => d.claim === t.id && !d.jammed && dist(d.pos, t.pos) <= 1.5),
-		).length;
-		return picture.length ? Math.round((done / picture.length) * 100) : 0;
-	}
+	// ---------- judge controls ----------
 
 	kill(id: AgentId) {
 		const d = this.drones.find((x) => x.id === id);
@@ -251,21 +318,15 @@ export default class SkyLive implements Live<SkySnap> {
 		this.jams = [];
 	}
 
-	setMission(i: number) {
-		this.mission = i % PICTURES.length;
-	}
-
 	snapshot(): SkySnap {
 		const alive = this.drones.filter((d) => d.alive);
-		const { tasks, size } = this.slots(this.mission, alive.length);
 		const claims = new Map<string, number>();
 		for (const d of alive) {
 			if (d.claim) {
 				claims.set(d.claim, (claims.get(d.claim) ?? 0) + 1);
 			}
 		}
-		const dupes = [...claims.values()].filter((n) => n > 1).length;
-		const lit = alive.filter((d) => d.color !== UNLIT).length;
+		const onShow = alive.filter((d) => d.mission.seq === this.current.seq).length;
 
 		return {
 			tick: this.tick,
@@ -275,23 +336,28 @@ export default class SkyLive implements Live<SkySnap> {
 				alive: d.alive,
 				jammed: d.alive && d.jammed,
 				color: d.color,
-				onSlot: this.onSlot(d, this.slots(d.mission, alive.length).tasks),
+				fresh: d.heardAt > 0 && this.tick - d.heardAt < 10,
+				stale: d.alive && d.mission.seq !== this.current.seq,
 			})),
 			links: this.links.map(([a, b]) => [{ ...a.pos }, { ...b.pos }]),
 			jams: this.jams,
-			targets: tasks.filter((t) => t.color !== UNLIT).map((t) => ({ pos: t.pos, color: t.color! })),
-			mission: this.mission,
+			targets: this.tasksFor(this.current, alive.length)
+				.filter((t) => t.color !== UNLIT)
+				.map((t) => ({ pos: t.pos, color: t.color! })),
+			show: this.current.show,
+			autoplay: this.autoplay,
+			transmitting: this.tick - this.current.start < 30,
 			headline: this.formed,
 			history: [...this.history],
 			chatter: this.chatter.slice(-8).reverse(),
 			stats: [
-				{ label: "Elapsed", value: Math.floor(this.tick / 10), unit: "s" },
+				{ label: "Show", value: SHOWS[this.current.show].name },
 				{ label: "Flock alive", value: alive.length, unit: `/ ${DRONES}` },
-				{ label: "Lights on", value: lit },
-				{ label: "Resolution", value: size },
+				{ label: "Got the new show", value: onShow, unit: `/ ${alive.length}` },
+				{ label: "Lights on", value: alive.filter((d) => d.color !== UNLIT).length },
 				{ label: "Radio links", value: this.links.length },
 				{ label: "Jammed", value: alive.filter((d) => d.jammed).length },
-				{ label: "Duplicate claims", value: dupes },
+				{ label: "Duplicate claims", value: [...claims.values()].filter((n) => n > 1).length },
 				{ label: "Message loss", value: this.lossPct, unit: "%" },
 			],
 		};
