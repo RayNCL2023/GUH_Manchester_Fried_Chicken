@@ -1,7 +1,0 @@
-opponents                       your bb/100  verdict   hands faults  slowest
-fold                         +75.0 ± 0.0       ahead    1000      0    0.01s
-call                        +402.1 ± 51.4      ahead    1000      0    0.03s
-random                      +128.0 ± 69.2      ahead    1000      0    0.03s
-shove                       +175.6 ± 77.2      ahead    1000      0    0.00s
-tight                        +57.7 ± 20.9      ahead    1000      0    0.02s
-equity                       +72.8 ± 48.8      ahead    1000      0    0.03s
