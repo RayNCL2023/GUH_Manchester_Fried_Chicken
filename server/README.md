@@ -23,6 +23,14 @@ Rules: 10 Hz ticks on a 60×40 grid. Sensor radius 5, radio range 8, movement 1 
 
 `PORT`, `BOTS` (default 0), `CORS_ORIGIN` (default `*`), `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`. Everything works without the keys: goals fall back to keywords, the sitrep to a template, and voice to cached clips or browser speech.
 
+## Deploy (Cloudflare, live at guh26-server.nitlix.com)
+
+`server/worker.ts` runs the same World inside one Durable Object.
+
+```bash
+cd server && bunx wrangler deploy            # secrets: wrangler secret put ELEVENLABS_API_KEY / ANTHROPIC_API_KEY
+```
+
 ## Deploy (Railway)
 
 1. On railway.com, create a project from this GitHub repo. `railway.json` sets the start command and the `/health` check.

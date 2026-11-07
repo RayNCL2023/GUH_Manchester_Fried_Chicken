@@ -15,6 +15,7 @@ export default function ({
 	side,
 	chatter,
 	stats,
+	joinable = false,
 }: {
 	title: React.ReactNode;
 	canvas: React.ReactNode;
@@ -25,6 +26,8 @@ export default function ({
 	side: React.ReactNode;
 	chatter: Chatter[];
 	stats: StatItem[];
+	/** Show the phone QR. Only for scenes phones actually join through the server. */
+	joinable?: boolean;
 }) {
 	return (
 		<div className="flex flex-col gap-[.75rem] p-[.75rem]">
@@ -35,7 +38,7 @@ export default function ({
 				</PanelBase>
 
 				<div className="flex flex-col gap-[.75rem]">
-					<JoinPanel />
+					{joinable && <JoinPanel />}
 					<PanelBase index="02" title={headline.label}>
 						<p className="font-display text-[4rem] leading-none tracking-[-0.04em] tabular-nums text-white">
 							{headline.value}

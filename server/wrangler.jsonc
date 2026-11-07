@@ -1,0 +1,13 @@
+{
+	"$schema": "../web/node_modules/wrangler/config-schema.json",
+	"name": "hive-server",
+	"main": "worker.ts",
+	"account_id": "2193fd4da537b6010890e3c67a9673cd",
+	"compatibility_date": "2026-05-15",
+	"compatibility_flags": ["nodejs_compat"],
+	"keep_vars": true,
+	"vars": { "BOTS": "0" },
+	"routes": [{ "pattern": "guh26-server.nitlix.com", "custom_domain": true }],
+	"durable_objects": { "bindings": [{ "name": "HIVE", "class_name": "Hive" }] },
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["Hive"] }],
+}

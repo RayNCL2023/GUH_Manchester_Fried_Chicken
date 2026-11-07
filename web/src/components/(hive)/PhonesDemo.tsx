@@ -98,6 +98,7 @@ export default function () {
 
     return (
         <DemoLayout
+            joinable
             title={<span className="text-flock">● Live · every pixel is a phone</span>}
             canvas={<canvas ref={canvas} width={960} height={640} className="w-full max-h-[calc(100vh-13rem)] object-contain bg-ink" />}
             controls={
