@@ -447,6 +447,13 @@ class Model:
         if any(e["street"] > 0 and e["p"] == opp for e in events):
             self._opp_range(ctx, board, record)
         st["hands"] = st.get("hands", 0) + 1
+        # Per-street fold-to-bet counts: [facing a bet, folded] by street.
+        fs = st.setdefault("fold_street", [[0, 0] for _ in range(4)])
+        for ev in events:
+            if ev["p"] == opp and ev["node"] == "post_bet":
+                fs[ev["street"]][0] += 1
+                if ev["kind"] == "fold":
+                    fs[ev["street"]][1] += 1
         sizes = st.setdefault("sizes", [[], [], []])
         for b, u_act in ctx.get("size_obs", ()):
             sizes[b].append(u_act)
@@ -1069,6 +1076,13 @@ class Model:
                 options.append((ev_r, act))
         # Measured postflop exploits (counts, not model estimates).
         fold_bet = self._fold_rate(st, "post_bet", 0.4)
+        # Prefer this street's own fold rate once it has enough data:
+        # many bots call early and fold late, or the reverse.
+        fs = st.get("fold_street")
+        if fs is not None:
+            n, f = fs[STREETS.index(gs.street)]
+            if n >= MIN_OBS:
+                fold_bet = (f + 4 * fold_bet) / (n + 4)
         if to_call == 0 and gs.can_raise and not opp_allin and \
                 fold_bet >= BARREL_FOLD:
             # Over-folder: bet every time we may, smallest size that works

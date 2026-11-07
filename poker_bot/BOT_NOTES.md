@@ -125,3 +125,7 @@ A benchmark across all 19 styles (6 matches each) showed everything positive (me
 ## Tried and reverted: faster learning
 
 MIN_OBS 6 to 4 and PRIOR_N 4 to 3: nit +32 to +43 and check-raiser +45 to +57, but smarteq +88 to +65 and tight +67 to +59. Even head-to-head with v9 (+4.5 +/- 22.4). Net neutral, so v9 is kept.
+
+## v10: per-street fold rates
+
+The "bet into over-folders / never bluff stations" rule now uses the opponent's fold-to-bet rate on the current street (smoothed toward the pooled rate) once it has 6 or more observations. Many bots call early and fold late, or the reverse. Against the same opponents and seeds: v9 head-to-head +7.6 +/- 13.2; check-raiser +45 to +58, equity +150 to +159, tight +67 to +69; station and over-folder within noise. 0 faults.
