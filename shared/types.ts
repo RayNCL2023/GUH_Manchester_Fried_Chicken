@@ -43,6 +43,7 @@ export interface Sense {
   inbox: Msg[];                  // messages that survived range/loss/jamming this tick
   tasks: Task[];                 // tasks this agent can currently perceive
   clockMs: number;               // shared clock (light show sync)
+  inspect?: boolean;             // viewer asked for this agent's local map (agent's-eye view)
 }
 
 export interface Task { id: string; pos: Vec; kind: "edge" | "protect" | "slot"; value: number;
@@ -57,6 +58,7 @@ export interface Action {
   claimed?: string | null;       // current task id (for viewer + metrics only; server never assigns)
   display?: { color: string };   // phone light-show colour
   status?: { mode: AgentMode; knownPct: number; windEstimate?: Vec }; // server can't see debug() in a worker
+  localMap?: string;             // only when sense.inspect: row-major, 1 char/cell: u c f b v
 }
 
 // ---------- Agent brain (Role 1). Pure: no network, no DOM. Runs in Web Worker or phone browser ----------
@@ -81,6 +83,7 @@ export interface WorldView {
   wind: Vec;
   metrics: { edgeMappedPct: number; msgLossPct: number; aliveAgents: number };
   recentChatter: { from: AgentId; line: string; tick: number }[];
+  inspected?: { id: AgentId; map: string };  // agent's-eye view, same encoding as Action.localMap
 }
 
 // ---------- Control commands (main screen / judge -> server) ----------
@@ -90,6 +93,7 @@ export type Control =
   | { type: "setWind"; wind: Vec }
   | { type: "setLoss"; pct: number }          // global packet loss 0-100
   | { type: "killAgent"; id: AgentId }
+  | { type: "inspect"; id: AgentId | null }  // null = stop inspecting
   | { type: "goal"; body: GoalBody }          // injected to ONE random agent; must spread by gossip
   | { type: "switchScenario"; scenario: ScenarioId }
   | { type: "reset" };
